@@ -217,7 +217,7 @@ class MirCrewAPIServer:
 
     def _test_request_response(self) -> Response:
         """Return a minimal Torznab response for Prowlarr test requests (matching real indexer format)"""
-        test_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+        test_xml = '''<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
     <channel>
         <item>
@@ -229,7 +229,7 @@ class MirCrewAPIServer:
             <guid>magnet-test-0</guid>
             <link>magnet:?xt=urn:btih:TEST1234567890TEST1234567890TEST12&dn=MirCrew.Indexer.Test.Response.SAMPLE.avi</link>
             <comments>https://mircrew-indexer.test/test-thread</comments>
-            <pubDate>{datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')}</pubDate>
+            <pubDate>2025-09-02T14:55:57.082Z</pubDate>
             <category>Movies</category>
             <size>1000000000</size>
             <description>Magnet: MirCrew.Indexer.Test.Response.SAMPLE.avi</description>
