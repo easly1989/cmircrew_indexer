@@ -17,6 +17,7 @@ from typing import List, Dict, Optional
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs
+from requests import Session
 
 # Add current directory to path for login import
 sys.path.insert(0, os.path.dirname(__file__))
@@ -34,7 +35,7 @@ class MirCrewIndexer:
 
     def __init__(self):
         self.base_url = "https://mircrew-releases.org"
-        self.session = None
+        self.session: Optional[Session] = None
         self.logged_in = False
         self.login_handler = MirCrewLogin()
 
@@ -162,6 +163,10 @@ class MirCrewIndexer:
                 search_params.append(('fid[]', cat_id))
 
             logging.info(f"🔍 Searching for: '{keywords}' with {len(search_params)} params")
+
+            # Ensure session is available before accessing attributes
+            if not self.session:
+                return self._error_response("Session not available for search")
 
             # Add debug output for request inspection
             logging.info(f"🔍 DEBUG: Session headers: {dict(self.session.headers)}")
@@ -363,7 +368,7 @@ class MirCrewIndexer:
             # PHPBB typically has div.post-text or div.content for post bodies
             magnet_pattern = re.compile(r'magnet:\?xt=urn:btih:[a-zA-Z0-9]{40}.*$')
 
-            for post in soup.find_all('div', class_=re.compile(r'(post|content)')):
+            for post in soup.find_all('div', class_=re.compile(r'(postbody|post-text|content|post)')):
                 for link in post.find_all('a', href=magnet_pattern):
                     magnet_url = link['href'].strip()
 
@@ -375,14 +380,39 @@ class MirCrewIndexer:
                     if not magnet_pattern.match(magnet_url):
                         continue
 
+                    # 🆕 EXTRACT MAGNET TITLE FROM dn PARAMETER
+                    display_name = self._extract_display_name(magnet_url)
+
+                    if display_name:
+                        # Use display name directly as magnet title (filename with episode info)
+                        magnet_title = display_name
+                        magnet_description = f"Magnet: {display_name}"
+                    else:
+                        # Fallback to original method if dn parameter not found
+                        magnet_title = thread['title']  # Default fallback to thread title
+                        magnet_description = f"Magnet link from thread: {thread['title']}"
+
+                        # Method 1: Check for element right after the magnet link
+                        next_elem = link.find_next(['span', 'strong', 'b', 'p', 'div'])
+                        if next_elem and next_elem.get_text(strip=True):
+                            next_text = next_elem.get_text(strip=True)
+                            # Skip metadata-like entries (too long or containing certain patterns)
+                            if len(next_text) < 100 and not 'modifica' in next_text.lower():
+                                magnet_title = f"{thread['title']} - {next_text}"
+                                magnet_description = f"{next_text}"
+
                     magnets.append({
-                        **thread,  # Copy all thread metadata
+                        **thread,
+                        'title': magnet_title,  # 🆕 Use magnet-specific title instead of thread title
                         'download': magnet_url,
                         'link': magnet_url,
-                        'description': f"Magnet link from thread: {thread['title']}"
+                        'description': magnet_description,
+                        'seeders': 1,  # Default (not available in HTML)
+                        'peers': 2,    # Default (not available in HTML)
                     })
 
-                    logging.debug(f"🔗 Extracted magnet: {magnet_url[:50]}...")
+                    logging.debug(f"🔗 Extracted magnet title: '{magnet_title}'")
+                    logging.debug(f"🔗 Magnet: {magnet_url[:50]}...")
 
         except Exception as e:
             logging.error(f"❌ Error extracting magnets from {thread['details']}: {str(e)}")
@@ -450,6 +480,24 @@ class MirCrewIndexer:
         xml_lines.extend(['</channel>', '</rss>'])
 
         return '\n'.join(xml_lines)
+
+    def _extract_display_name(self, magnet_url: str) -> Optional[str]:
+        """
+        Extract the display name (filename) from the magnet link's dn parameter
+        """
+        try:
+            # Parse the URL to get query parameters
+            parsed_url = urlparse(magnet_url)
+            query_params = parse_qs(parsed_url.query)
+
+            # Look for the dn (display name) parameter
+            if 'dn' in query_params:
+                display_name = query_params['dn'][0]  # Take first value
+                return display_name
+
+            return None
+        except Exception:
+            return None
 
     def _escape_xml(self, text: str) -> str:
         """Basic XML escaping"""
