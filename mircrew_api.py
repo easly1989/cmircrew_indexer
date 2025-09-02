@@ -90,6 +90,12 @@ class MirCrewAPIServer:
         params['ep'] = request.args.get('ep', '')  # episode number
         params['limit'] = request.args.get('limit', '100')  # result limit
 
+        # Additional Torznab parameters that Prowlarr might send
+        params['extended'] = request.args.get('extended', '')  # extended info
+        params['offset'] = request.args.get('offset', '0')  # pagination offset
+        params['imdbid'] = request.args.get('imdbid', '')  # IMDB ID
+        params['tvdbid'] = request.args.get('tvdbid', '')  # TVDB ID
+
         return params
 
     def _capabilities_response(self) -> Response:
@@ -125,16 +131,37 @@ class MirCrewAPIServer:
             # Build command line arguments for the indexer
             cmd_args = [sys.executable, 'mircrew_indexer.py']
 
-            # Add query parameter
-            if params.get('q'):
+            # Check if we have any valid search parameters
+            has_query = bool(params.get('q', '').strip())
+            has_season = bool(params.get('season'))
+            has_ep = bool(params.get('ep'))
+
+            # Add parameters based on what's provided
+            if has_query:
+                # If we have a query string (even if empty), use it
                 cmd_args.extend(['-q', params['q']])
-
-            # Add season/episode if provided
-            if params.get('season'):
+            elif has_season and has_ep:
+                # Season and episode search
                 cmd_args.extend(['-season', params['season']])
-
-            if params.get('ep'):
                 cmd_args.extend(['-ep', params['ep']])
+                # Add a blank query to satisfy indexer requirements
+                cmd_args.extend(['-q', ''])
+            elif has_season:
+                # Season-only search
+                cmd_args.extend(['-season', params['season']])
+                cmd_args.extend(['-q', ''])
+            elif has_ep:
+                # Episode-only search (less common, but supported)
+                cmd_args.extend(['-ep', params['ep']])
+                cmd_args.extend(['-q', ''])
+            else:
+                # No specific parameters - do a default search with current year
+                from datetime import datetime
+                current_year = str(datetime.now().year)
+                cmd_args.extend(['-year', current_year])
+
+            # Log final command for debugging
+            logger.info(f"Final indexer command: {cmd_args}")
 
             logger.info(f"Executing indexer with args: {cmd_args}")
 
@@ -179,8 +206,18 @@ def main():
         logger.error("mircrew_indexer.py not found in current directory")
         sys.exit(1)
 
-    if not os.path.exists('.env'):
-        logger.warning(".env file not found - indexer may fail if credentials are required")
+    # Check for environment variables (either from .env or Docker)
+    username = os.environ.get('MIRCREW_USERNAME')
+    password = os.environ.get('MIRCREW_PASSWORD')
+
+    if not username or not password:
+        # Fallback check for .env file (for local testing)
+        if os.path.exists('.env'):
+            logger.info("Found .env file, environment variables will be loaded by python-dotenv in indexer")
+        else:
+            logger.warning("No MIRCREW_USERNAME/MIRCREW_PASSWORD environment variables set and no .env file found")
+    else:
+        logger.info("MirCrew credentials found in environment variables")
 
     # Create and run server
     server = MirCrewAPIServer()

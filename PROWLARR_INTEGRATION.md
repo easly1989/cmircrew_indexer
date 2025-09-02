@@ -89,8 +89,6 @@ curl "http://localhost:9118/api?t=search&q=dexter"
     - Search for and select `Generic Torznab`
     - This is the correct indexer type for custom Torznab APIs
 
-    - Search for "Generic Torznab" in the indexer list
-
 3. **Configure the Indexer**
     ```
     Name: MirCrew Indexer
