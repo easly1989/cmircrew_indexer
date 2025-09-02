@@ -216,22 +216,30 @@ class MirCrewAPIServer:
             return self._error_response(f"Search execution error: {str(e)}", 500)
 
     def _test_request_response(self) -> Response:
-        """Return a minimal Torznab response for Prowlarr test requests"""
+        """Return a minimal Torznab response for Prowlarr test requests (matching real indexer format)"""
         test_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
     <channel>
         <item>
-            <title>MirCrew Indexer Test Response</title>
-            <description>Indexer is responding correctly - this is a test result</description>
-            <guid>test-response-{int(time.time())}</guid>
-            <pubDate>{datetime.now().strftime('%a, %d %b %Y %H:%M:%S GMT')}</pubDate>
-            <size>1000000</size>
+            <title>Total results</title>
+            <torznab:attr name="total" value="1"/>
+        </item>
+        <item>
+            <title>MirCrew.Indexer.Test.Response.SAMPLE.avi</title>
+            <guid>magnet-test-0</guid>
+            <link>magnet:?xt=urn:btih:TEST1234567890TEST1234567890TEST12&dn=MirCrew.Indexer.Test.Response.SAMPLE.avi</link>
+            <comments>https://mircrew-indexer.test/test-thread</comments>
+            <pubDate>{datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')}</pubDate>
+            <category>Movies</category>
+            <size>1000000000</size>
+            <description>Magnet: MirCrew.Indexer.Test.Response.SAMPLE.avi</description>
+            <torznab:attr name="category" value="25"/>
+            <torznab:attr name="size" value="1000000000"/>
             <torznab:attr name="seeders" value="1"/>
             <torznab:attr name="peers" value="2"/>
             <torznab:attr name="downloadvolumefactor" value="0"/>
             <torznab:attr name="uploadvolumefactor" value="1"/>
         </item>
-        <torznab:attr name="total" value="1"/>
     </channel>
 </rss>'''
         return Response(test_xml, mimetype='application/xml')
