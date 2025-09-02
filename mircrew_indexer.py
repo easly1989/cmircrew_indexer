@@ -352,6 +352,7 @@ class MirCrewIndexer:
                 # Response header
                 f'<item>',
                 f'<title>Direct thread search results for thread::{thread_id}</title>',
+                f'<pubDate>{datetime.now().isoformat()}Z</pubDate>',
                 f'<torznab:attr name="total" value="{len(all_magnets)}"/>',
                 f'</item>',
             ]
@@ -516,6 +517,7 @@ class MirCrewIndexer:
             # Response header
             f'<item>',
             f'<title>Total results</title>',
+            f'<pubDate>{datetime.now().isoformat()}Z</pubDate>',
             f'<torznab:attr name="total" value="{len(magnets)}"/>',
             f'</item>',
         ]

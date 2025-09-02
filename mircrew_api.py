@@ -223,6 +223,7 @@ class MirCrewAPIServer:
     <channel>
         <item>
             <title>Total results</title>
+            <pubDate>2025-09-02T14:55:57.082Z</pubDate>
             <torznab:attr name="total" value="1"/>
         </item>
         <item>

@@ -31,6 +31,7 @@ test_xml = '''<?xml version="1.0" encoding="UTF-8"?>
     <channel>
         <item>
             <title>Total results</title>
+            <pubDate>2025-09-02T14:55:57.082Z</pubDate>
             <torznab:attr name="total" value="1"/>
         </item>
         <item>
@@ -93,6 +94,36 @@ print("TESTING XML PARSING:")
 try:
     import xml.etree.ElementTree as ET
     root = ET.fromstring(caps_xml)
-    print("✓ XML parsing successful!")
+    print("✓ CAPS XML parsing successful!")
+
+    # Now test the RSS XML
+    print()
+    print("TESTING RSS XML PARSING:")
+    rss_root = ET.fromstring(test_xml)
+    print("✓ RSS XML parsing successful!")
+
+    # Check that all items have pubDate elements
+    items = rss_root.findall('.//item')
+    all_have_pubdate = True
+
+    for i, item in enumerate(items):
+        title = item.find('title')
+        pubdate = item.find('pubDate')
+        title_text = title.text if title is not None else 'No title'
+
+        if pubdate is None:
+            all_have_pubdate = False
+            print(f"Item {i+1} ('{title_text}'): MISSING pubDate!")
+        else:
+            pubdate_text = pubdate.text if pubdate.text else "EMPTY"
+            if pubdate_text and len(pubdate_text) > 25:
+                pubdate_text = pubdate_text[:25] + "..."
+            print(f"Item {i+1} ('{title_text}'): Has pubDate ({pubdate_text})")
+
+    if all_have_pubdate:
+        print("✓ ALL RSS ITEMS HAVE pubDate - PASSED!")
+    else:
+        print("✗ SOME RSS ITEMS MISSING pubDate - FAILED!")
+
 except Exception as e:
     print("✗ XML parsing failed:", str(e))
