@@ -455,6 +455,7 @@ class MirCrewIndexer:
                 f'<torznab:attr name="peers" value="2"/>',
                 f'<torznab:attr name="downloadvolumefactor" value="0"/>',
                 f'<torznab:attr name="uploadvolumefactor" value="1"/>',
+                f'<torznab:attr name="tag" value="{magnet.get("thread_tag", "")}"/>',
 
                 f'</item>'
             ])
@@ -462,6 +463,23 @@ class MirCrewIndexer:
         xml_lines.extend(['</channel>', '</rss>'])
 
         return '\n'.join(xml_lines)
+
+    def _extract_thread_number(self, thread_url: str) -> Optional[str]:
+        """
+        Extract the thread number from a thread URL
+        """
+        try:
+            # Extract thread number from URL like: https://mircrew-releases.org/viewtopic.php?t=180404
+            parsed_url = urlparse(thread_url)
+            query_params = parse_qs(parsed_url.query)
+
+            if 't' in query_params:
+                thread_number = query_params['t'][0]
+                return thread_number
+
+            return None
+        except Exception:
+            return None
 
     def _extract_display_name(self, magnet_url: str) -> Optional[str]:
         """
