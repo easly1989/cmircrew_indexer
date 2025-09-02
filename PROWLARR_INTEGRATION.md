@@ -81,20 +81,25 @@ curl "http://localhost:9118/api?t=search&q=dexter"
 ### 4. Configure Prowlarr
 
 1. **Access Prowlarr Web UI**
-   - Go to your Prowlarr instance
+    - Go to your Prowlarr instance
 
-2. **Add Custom Indexer**
-   - Go to `Settings` → `Indexers`
-   - Click `+ Add Indexer`
-   - Select `Torznab (Custom)`
+2. **Add Indexer**
+    - Navigate to `Indexers` tab
+    - Click `+ Add Indexer`
+    - Search for and select `Generic Torznab`
+    - This is the correct indexer type for custom Torznab APIs
+
+    - Search for "Generic Torznab" in the indexer list
 
 3. **Configure the Indexer**
-   ```
-   Name: MirCrew Indexer
-   URL: http://mircrew-indexer-api:9118/api  # Use container name for network comms
-   API Key: (leave blank - no authentication required)
-   Categories: Movies (2000), TV (5000)
-   ```
+    ```
+    Name: MirCrew Indexer
+    URL: http://mircrew-indexer-api:9118/api  # Use container name for network comms
+    API Key: (leave blank - no authentication required)
+    Categories: Movies (2000), TV (5000)
+    ```
+
+    - Select all available categories (Movies 2000, TV 5000, etc.)
 
 4. **Test the Connection**
    - Click "Test" to verify the indexer works
@@ -210,6 +215,16 @@ fi
 # Find container IP
 docker inspect mircrew-indexer-api | grep IPAddress
 ```
+
+#### ❌ "Generic Torznab not found" in Prowlarr
+
+**Cause**: Difficulty finding the indexer type
+
+**Solutions**:
+- Use the search bar in the "Add Indexer" dialog
+- Search for "Torznab"
+- Select the first "Torznab" result that appears
+- This works the same as "Generic Torznab" in most Prowlarr versions
 
 #### ❌ "Authentication failed" in API logs
 
