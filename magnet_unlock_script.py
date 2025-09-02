@@ -180,7 +180,7 @@ class MagnetUnlocker:
             soup = BeautifulSoup(response.text, 'html.parser')
             thanks_btn = soup.find('a', id=button_id)
 
-            if thanks_btn and hasattr(thanks_btn, 'get'):
+            if thanks_btn and hasattr(thanks_btn, 'get') and isinstance(thanks_btn, Tag):
                 # Get the actual href from the button
                 actual_href = thanks_btn.get('href', '')
                 if isinstance(actual_href, str) and actual_href:
@@ -263,6 +263,7 @@ class MagnetUnlocker:
     def extract_magnets_with_unlock(self, thread_url: str) -> list:
         """
         Extract magnets from a thread, unlocking first if needed
+        ONLY extracts from the FIRST POST to avoid duplicates
         """
         if not self.session:
             logging.error("❌ Session not available")
@@ -282,21 +283,73 @@ class MagnetUnlocker:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Find all magnet links
+            # Find all magnet links from FIRST POST ONLY
             magnet_pattern = re.compile(r'magnet:\?xt=urn:btih:[a-zA-Z0-9]{40}.*$')
             magnets = []
 
-            for post in soup.find_all('div', class_=re.compile(r'(postbody|post-text|content|post)')):
-                for link in post.find_all('a', href=magnet_pattern):
+            # Step 1: Get the first post ID (we already have the method for this)
+            first_post_id = self._extract_first_post_id(soup)
+
+            # NEW APPROACH: Find the first post by looking for post containers
+            # and taking the chronologically first one (TOP of the page)
+            all_post_containers = []
+
+            # Look for common phpBB post container patterns
+            pattern_candidates = [
+                soup.find_all('div', class_=re.compile(r'postbody')),
+                soup.find_all('div', class_=re.compile(r'post-text')),
+                soup.find_all('div', class_=re.compile(r'content')),
+                soup.find_all('div', class_=re.compile(r'post')),
+                soup.find_all('article', class_=re.compile(r'post')),
+                soup.find_all('div', attrs={'data-post-id': True}),
+                soup.find_all(['div', 'li'], class_=re.compile(r'(post|content)')),
+            ]
+
+            for candidate_list in pattern_candidates:
+                if candidate_list and len(candidate_list) > 0:
+                    all_post_containers.extend(candidate_list)
+
+            # Remove duplicates based on content
+            seen_posts = set()
+            unique_post_containers = []
+            for post in all_post_containers:
+                post_text = post.get_text(strip=True)[:100]  # First 100 chars as fingerprint
+                if post_text and post_text not in seen_posts:
+                    seen_posts.add(post_text)
+                    unique_post_containers.append(post)
+
+            logging.info(f"📝 Found {len(unique_post_containers)} unique post containers")
+
+            # Take the FIRST post container (chronologically first)
+            if unique_post_containers:
+                first_post = unique_post_containers[0]
+                logging.info("✅ Using first post container for magnet extraction")
+
+                # Extract magnets ONLY from this first post
+                for link in first_post.find_all('a', href=magnet_pattern):
                     magnet_url = link['href'].strip()
                     magnet_url = re.sub(r'\s+', '', magnet_url)  # Remove whitespace
                     magnet_url = magnet_url.split('#')[0]  # Remove fragments
 
                     if magnet_pattern.match(magnet_url):
-                        magnets.append(magnet_url)
-                        logging.debug(f"🧲 Found magnet: {magnet_url[:50]}...")
+                        # Avoid duplicates
+                        if magnet_url not in magnets:
+                            magnets.append(magnet_url)
+                            logging.debug(f"🧲 Found magnet from first post: {magnet_url[:50]}...")
+            else:
+                logging.warning("⚠️ No post containers found, extracting from entire page")
+                # Extreme fallback: search the entire page
+                for link in soup.find_all('a', href=magnet_pattern):
+                    magnet_url = link['href'].strip()
+                    magnet_url = re.sub(r'\s+', '', magnet_url)
+                    magnet_url = magnet_url.split('#')[0]
 
-            logging.info(f"📋 Extracted {len(magnets)} magnets after unlock attempt")
+                    if magnet_pattern.match(magnet_url):
+                        if magnet_url not in magnets:
+                            magnets.append(magnet_url)
+                            logging.debug(f"🧲 Found magnet (page search): {magnet_url[:50]}...")
+
+            logging.info(f"📋 Extracted {len(magnets)} magnets from first post after unlock attempt")
             return magnets
 
         except Exception as e:
