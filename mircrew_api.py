@@ -228,7 +228,7 @@ class MirCrewAPIServer:
         <item>
             <title>MirCrew.Indexer.Test.Response.SAMPLE.avi</title>
             <guid>magnet-test-0</guid>
-            <link>magnet:?xt=urn:btih:TEST1234567890TEST1234567890TEST12&dn=MirCrew.Indexer.Test.Response.SAMPLE.avi</link>
+            <link>magnet:?xt=urn:btih:TEST1234567890TEST1234567890TEST12&amp;dn=MirCrew.Indexer.Test.Response.SAMPLE.avi</link>
             <comments>https://mircrew-indexer.test/test-thread</comments>
             <pubDate>2025-09-02T14:55:57.082Z</pubDate>
             <category>Movies</category>
