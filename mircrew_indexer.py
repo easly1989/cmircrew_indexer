@@ -151,7 +151,7 @@ class MirCrewIndexer:
                 words = [word.strip() for word in keywords.split() if word.strip()]
                 keywords = ' '.join('+' + word for word in words if word)
 
-            # PROVEN WORKING search parameters from diagnostic tests
+            # REVERT TO WORKING DIAGNOSTIC SEARCH PARAMETERS
             search_url = f"{self.base_url}/search.php"
 
             # Determine appropriate categories based on query
@@ -164,8 +164,6 @@ class MirCrewIndexer:
                 ('sk', 't'),
                 ('sd', 'd'),
                 ('st', '0'),
-                ('ch', '25'),
-                ('t', '0')
             ]
 
             for cat_id in categories:
