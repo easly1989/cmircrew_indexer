@@ -106,9 +106,10 @@ class MirCrewAPIServer:
 
     def _capabilities_response(self) -> Response:
         """Return Torznab capabilities XML"""
+        logger.info("Providing capabilities response to Prowlarr")
         caps_xml = '''<?xml version="1.0" encoding="UTF-8"?>
 <caps>
-    <server version="1.0" title="MirCrew Indexer" strapline="MirCrew Indexer API" email="support@mircrew-indexer.local" url="http://localhost" image="http://localhost/logo.png"/>
+    <server version="1.0" title="MirCrew Indexer" strapline="MirCrew Indexer API" email="support@example.com" url="http://localhost:9118" image="http://localhost:9118/api"/>
     <limits max="100" default="50"/>
     <registration available="no" open="no"/>
     <searching>
@@ -246,8 +247,11 @@ class MirCrewAPIServer:
 
     def _error_response(self, message: str, code: int = 500) -> Response:
         """Return error response in Torznab format"""
+        # Escape special characters in the message to prevent XML parsing issues
+        import html
+        escaped_message = html.escape(message, quote=True)
         error_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<error code="{code}" description="{message}"/>'''
+<error code="{code}" description="{escaped_message}"/>'''
         return Response(error_xml, mimetype='application/xml', status=code)
 
     def run(self):
