@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   mircrew-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
+    image: amon2126/cmircrew_indexer
     container_name: mircrew-indexer-api
     restart: unless-stopped
     ports:
