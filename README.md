@@ -175,11 +175,28 @@ magnets = unlocker.extract_magnets_with_unlock(thread_url)
 
 ### 🔧 **Technical Architecture**
 
-**Core Files:**
+**Project Structure:**
+
+**Root Directory (Core Files):**
 - `mircrew_indexer.py` - Main Torznab API implementation
 - `magnet_unlock_script.py` - Thanks button unlocking system
 - `login.py` - Authentication and session management
-- `thread_analyzer.py` - Diagnostic and analysis tools
+- `mircrew.yml` - Configuration file
+- `requirements.txt` - Python dependencies
+- `README.md` - This documentation
+- `.env.example` - Environment variable template
+
+**utilities/** (Diagnostic & Utility Scripts):**
+- `search_diagnostic_fixed.py` - Search functionality testing
+- `search_diagnostic.py` - Search diagnostics
+- `test_connection.py` - Network connectivity testing
+- `thread_analyzer.py` - Thread structure analysis
+- `mircrew_scraper.py` - Alternative scraping methods
+- `diagnostic_output.txt` - Diagnostic log files
+
+**Configuration Files:**
+- `.gitignore` - Git ignore patterns
+- `.env` - **USER FILE** (not in repo) with credentials
 
 **Dependencies:**
 - Python 3.8+
@@ -289,10 +306,11 @@ MIRCREW_PASSWORD=your_actual_password
 
 ### Manual Debugging
 ```bash
-# Diagnostic tools available:
-# python thread_analyzer.py - Analyze thread structure
-# python test_connection.py - Test forum connectivity
-# python search_diagnostic.py - Comprehensive search testing
+# Diagnostic tools available in utilities/ folder:
+# python utilities/thread_analyzer.py - Analyze thread structure
+# python utilities/test_connection.py - Test forum connectivity
+# python utilities/search_diagnostic.py - Comprehensive search testing
+# python utilities/mircrew_scraper.py - Alternative scraping methods
 ```
 
 ## 📊 Project Status
