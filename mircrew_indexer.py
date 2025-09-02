@@ -23,6 +23,7 @@ from requests import Session
 sys.path.insert(0, os.path.dirname(__file__))
 
 from login import MirCrewLogin
+from magnet_unlock_script import MagnetUnlocker
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,6 +39,8 @@ class MirCrewIndexer:
         self.session: Optional[Session] = None
         self.logged_in = False
         self.login_handler = MirCrewLogin()
+        # Initialize magnet unlocker - will share the same session
+        self.unlocker: Optional[MagnetUnlocker] = None
 
         # Category mappings from mircrew.yml (id -> cat string)
         self.cat_mappings = {
@@ -85,6 +88,12 @@ class MirCrewIndexer:
             self.session = self.login_handler.session
             self.logged_in = True
             logging.info("✅ Successfully authenticated")
+
+            # Initialize magnet unlocker with the same session
+            self.unlocker = MagnetUnlocker()
+            self.unlocker.session = self.session  # Share the authenticated session
+            self.unlocker.logged_in = True
+
             return True
         else:
             logging.error("❌ Authentication failed")
@@ -348,71 +357,46 @@ class MirCrewIndexer:
     def _extract_thread_magnets(self, thread: Dict) -> List[Dict]:
         """
         Fetch thread page and extract all magnet links
+        Now includes thanks button unlocking functionality - WORKING!
         """
         magnets = []
 
         try:
-            if not self.session:
-                logging.error("❌ Session not available")
+            if not self.session or not self.unlocker:
+                logging.error("❌ Session or unlocker not available")
                 return magnets
 
-            response = self.session.get(thread['details'], timeout=30)
+            thread_url = thread['details']
+            logging.info(f"🔓 Attempting to unlock magnets for thread: {thread_url}")
 
-            if response.status_code != 200:
-                logging.warning(f"⚠️ Failed to fetch thread {thread['details']}: {response.status_code}")
-                return magnets
+            # Use the unlocker to get magnets (this will handle thanks button clicking)
+            magnet_urls = self.unlocker.extract_magnets_with_unlock(thread_url)
 
-            soup = BeautifulSoup(response.text, 'html.parser')
+            for magnet_url in magnet_urls:
+                # 🆕 EXTRACT MAGNET TITLE FROM dn PARAMETER
+                display_name = self._extract_display_name(magnet_url)
 
-            # Find all magnet links in post contents
-            # PHPBB typically has div.post-text or div.content for post bodies
-            magnet_pattern = re.compile(r'magnet:\?xt=urn:btih:[a-zA-Z0-9]{40}.*$')
+                if display_name:
+                    # Use display name directly as magnet title (filename with episode info)
+                    magnet_title = display_name
+                    magnet_description = f"Magnet: {display_name}"
+                else:
+                    # Fallback to thread title
+                    magnet_title = thread['title']  # Default fallback to thread title
+                    magnet_description = f"Magnet link from thread: {thread['title']}"
 
-            for post in soup.find_all('div', class_=re.compile(r'(postbody|post-text|content|post)')):
-                for link in post.find_all('a', href=magnet_pattern):
-                    magnet_url = link['href'].strip()
+                magnets.append({
+                    **thread,
+                    'title': magnet_title,  # 🆕 Use magnet-specific title instead of thread title
+                    'download': magnet_url,
+                    'link': magnet_url,
+                    'description': magnet_description,
+                    'seeders': 1,  # Default (not available in HTML)
+                    'peers': 2,    # Default (not available in HTML)
+                })
 
-                    # Clean up magnet URL
-                    magnet_url = re.sub(r'\s+', '', magnet_url)  # Remove whitespace
-                    magnet_url = magnet_url.split('#')[0]  # Remove fragments
-
-                    # Skip if invalid magnet
-                    if not magnet_pattern.match(magnet_url):
-                        continue
-
-                    # 🆕 EXTRACT MAGNET TITLE FROM dn PARAMETER
-                    display_name = self._extract_display_name(magnet_url)
-
-                    if display_name:
-                        # Use display name directly as magnet title (filename with episode info)
-                        magnet_title = display_name
-                        magnet_description = f"Magnet: {display_name}"
-                    else:
-                        # Fallback to original method if dn parameter not found
-                        magnet_title = thread['title']  # Default fallback to thread title
-                        magnet_description = f"Magnet link from thread: {thread['title']}"
-
-                        # Method 1: Check for element right after the magnet link
-                        next_elem = link.find_next(['span', 'strong', 'b', 'p', 'div'])
-                        if next_elem and next_elem.get_text(strip=True):
-                            next_text = next_elem.get_text(strip=True)
-                            # Skip metadata-like entries (too long or containing certain patterns)
-                            if len(next_text) < 100 and not 'modifica' in next_text.lower():
-                                magnet_title = f"{thread['title']} - {next_text}"
-                                magnet_description = f"{next_text}"
-
-                    magnets.append({
-                        **thread,
-                        'title': magnet_title,  # 🆕 Use magnet-specific title instead of thread title
-                        'download': magnet_url,
-                        'link': magnet_url,
-                        'description': magnet_description,
-                        'seeders': 1,  # Default (not available in HTML)
-                        'peers': 2,    # Default (not available in HTML)
-                    })
-
-                    logging.debug(f"🔗 Extracted magnet title: '{magnet_title}'")
-                    logging.debug(f"🔗 Magnet: {magnet_url[:50]}...")
+                logging.debug(f"🔗 Extracted magnet title: '{magnet_title}'")
+                logging.debug(f"🔗 Magnet: {magnet_url[:50]}...")
 
         except Exception as e:
             logging.error(f"❌ Error extracting magnets from {thread['details']}: {str(e)}")
