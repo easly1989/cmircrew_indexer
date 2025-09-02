@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  mircrew-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: mircrew-indexer-api
+    restart: unless-stopped
+    ports:
+      - "9118:9118"  # Expose on host port
+    networks:
+      - saltbox  # Connect to your Prowlarr network
+    environment:
+      - PYTHONUNBUFFERED=1
+      # MirCrew credentials - REPLACE with your actual values
+      - MIRCREW_USERNAME=your_mircrew_username_here
+      - MIRCREW_PASSWORD=your_mircrew_password_here
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9118/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start-period: 40s
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Use your existing saltbox network (don't create a new one)
+networks:
+  saltbox:
+    external: true
