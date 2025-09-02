@@ -127,6 +127,7 @@ class MirCrewIndexer:
               ep: Optional[str] = None, year: Optional[int] = None) -> str:
         """
         Perform search and return Torznab XML
+        Supports direct thread searching with syntax: thread::{Thread_Number}
         """
         if not self.authenticate():
             return self._error_response("Authentication failed")
@@ -134,6 +135,10 @@ class MirCrewIndexer:
         try:
             # Ensure we have a session from authentication
             # (authenticate() call above ensures this)
+
+            # Check for direct thread search syntax: thread::{Thread_Number}
+            if q and q.lower().startswith("thread::"):
+                return self._search_thread_by_id(q)
 
             # Build search keywords - back to exact mircrew.yml processing
             keywords = q
@@ -305,6 +310,87 @@ class MirCrewIndexer:
 
         return threads
 
+    def _search_thread_by_id(self, query: str) -> str:
+        """
+        Search for specific thread by ID using syntax: thread::{Thread_Number}
+        Example: thread::180404
+        """
+        try:
+            # Parse thread ID from query: thread::180404 -> 180404
+            if not query.lower().startswith("thread::"):
+                return self._error_response("Invalid thread search syntax. Use: thread::{number}")
+
+            thread_id = query[8:]  # Remove "thread::" prefix
+
+            # Validate thread ID format
+            if not thread_id.isdigit():
+                return self._error_response(f"Invalid thread ID: {thread_id}. Must be numeric.")
+
+            logging.info(f"🔍 Direct thread search for ID: {thread_id}")
+
+            # Construct thread URL
+            thread_url = f"{self.base_url}/viewtopic.php?t={thread_id}"
+            thread_data = {
+                'title': f"Thread {thread_id}",
+                'details': thread_url,
+                'category': 'TV',  # Default category
+                'category_id': '52',  # TV category
+                'pub_date': datetime.now().isoformat(),
+                'size': '1GB',  # Default size
+                'forum_id': '51'  # Default forum ID
+            }
+
+            # Extract magnets from this specific thread
+            all_magnets = self._extract_thread_magnets(thread_data)
+
+            # Build and return Torznab XML for direct thread search
+            xml_lines = [
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">',
+                '<channel>',
+
+                # Response header
+                f'<item>',
+                f'<title>Direct thread search results for thread::{thread_id}</title>',
+                f'<torznab:attr name="total" value="{len(all_magnets)}"/>',
+                f'</item>',
+            ]
+
+            for i, magnet in enumerate(all_magnets):
+                guid = f"thread-{thread_id}-{i}"
+
+                xml_lines.extend([
+                    f'<item>',
+                    f'<title>{self._escape_xml(magnet["title"])}</title>',
+                    f'<guid>{guid}</guid>',
+                    f'<link>{self._escape_xml(magnet["link"])}</link>',
+                    f'<comments>{self._escape_xml(magnet["details"])}</comments>',
+                    f'<pubDate>{magnet["pub_date"]}</pubDate>',
+                    f'<category>{magnet["category"]}</category>',
+                    f'<size>{self._convert_size_to_bytes(magnet["size"])}</size>',
+                    f'<description>{self._escape_xml(magnet.get("description", ""))}</description>',
+
+                    # Torznab-specific attributes
+                    f'<torznab:attr name="category" value="{magnet["category_id"]}"/>',
+                    f'<torznab:attr name="size" value="{self._convert_size_to_bytes(magnet["size"])}"/>',
+                    f'<torznab:attr name="seeders" value="1"/>',
+                    f'<torznab:attr name="peers" value="2"/>',
+                    f'<torznab:attr name="downloadvolumefactor" value="0"/>',
+                    f'<torznab:attr name="uploadvolumefactor" value="1"/>',
+
+                    f'</item>'
+                ])
+
+            xml_lines.extend(['</channel>', '</rss>'])
+
+            xml_output = '\n'.join(xml_lines)
+            logging.info(f"📊 Direct thread search complete: {len(all_magnets)} magnets from thread {thread_id}")
+            return xml_output
+
+        except Exception as e:
+            logging.error(f"❌ Error in direct thread search: {str(e)}")
+            return self._error_response(f"Error searching thread: {str(e)}")
+
     def _contains_partial_match(self, query_term: str, title_text: str) -> bool:
         """EXACT SAME enhanced matching as diagnostic_fixed.py"""
         # Direct substring match (handles "Matrix" in "Animatrix")
@@ -455,7 +541,6 @@ class MirCrewIndexer:
                 f'<torznab:attr name="peers" value="2"/>',
                 f'<torznab:attr name="downloadvolumefactor" value="0"/>',
                 f'<torznab:attr name="uploadvolumefactor" value="1"/>',
-                f'<torznab:attr name="tag" value="{magnet.get("thread_tag", "")}"/>',
 
                 f'</item>'
             ])
@@ -463,23 +548,6 @@ class MirCrewIndexer:
         xml_lines.extend(['</channel>', '</rss>'])
 
         return '\n'.join(xml_lines)
-
-    def _extract_thread_number(self, thread_url: str) -> Optional[str]:
-        """
-        Extract the thread number from a thread URL
-        """
-        try:
-            # Extract thread number from URL like: https://mircrew-releases.org/viewtopic.php?t=180404
-            parsed_url = urlparse(thread_url)
-            query_params = parse_qs(parsed_url.query)
-
-            if 't' in query_params:
-                thread_number = query_params['t'][0]
-                return thread_number
-
-            return None
-        except Exception:
-            return None
 
     def _extract_display_name(self, magnet_url: str) -> Optional[str]:
         """
