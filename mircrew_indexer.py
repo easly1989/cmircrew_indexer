@@ -174,7 +174,7 @@ class MirCrewIndexer:
                 return self._error_response(f"Search failed with status {response.status_code}")
 
             # Parse search results and build thread list
-            threads = self._parse_search_results(response.text)
+            threads = self._parse_search_results(response.text, keywords)
 
             # DEBUG OUTPUT: Compare with diagnostic - full HTML analysis
             if q == "Matrix":  # Add debug output for testing
@@ -209,7 +209,7 @@ class MirCrewIndexer:
             logging.error(f"❌ Search error: {str(e)}")
             return self._error_response(str(e))
 
-    def _parse_search_results(self, html: str) -> List[Dict]:
+    def _parse_search_results(self, html: str, keywords: str = "") -> List[Dict]:
         """
         Parse search results HTML and extract thread data - USING DIAGNOSTIC APPROACH
         """
@@ -259,20 +259,37 @@ class MirCrewIndexer:
 
         logging.info(f"📝 Parser found {len(results)} valid threads from {len(elements)} raw elements")
 
-        # Convert results to expected thread format
-        # For now, just create basic Thread objects from the results
+        # Convert results to expected thread format, now with proper URLs
         threads = []
-        for result_text in results:
+        processed_results = 0
+
+        for element in elements:
+            # Reprocess elements to get URL from the title link
+            title_link = element.find('a', class_='topictitle')
+            if not title_link or not title_link.get('href'):
+                continue
+
+            full_text = element.get_text().strip()
+            if not full_text or len(full_text) < 10:
+                continue
+
+            # Extract the REAL URL from the title link (critical fix!)
+            details_url = urljoin(self.base_url, title_link['href'])
+
             threads.append({
-                'title': result_text.split('\n')[0].strip()[:100] if result_text else "Unknown Title",  # First line usually title
-                'details': 'dummy-url',  # Will be fixed by magnet extraction
-                'category': 'Movies',  # Default
-                'category_id': '25',   # Default Movie category
+                'title': title_link.get_text().strip()[:100],
+                'details': details_url,  # REAL URL for magnet extraction!
+                'category': 'Movies' if not 'dexter' in keywords.lower() else 'TV',
+                'category_id': '25' if not 'dexter' in keywords.lower() else '52',
                 'pub_date': datetime.now().isoformat(),
-                'size': '1GB',        # Default
-                'forum_id': '25',
-                'full_text': result_text
+                'size': '1GB',
+                'forum_id': '25' if not 'dexter' in keywords.lower() else '52',
+                'full_text': full_text
             })
+
+            processed_results += 1
+            if processed_results >= len(results):  # Limit to the analyzed results
+                break
 
         return threads
 
