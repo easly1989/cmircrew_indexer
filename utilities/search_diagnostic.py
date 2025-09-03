@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Diagnostic search script for mircrew-releases.org
-Tests different search parameters to find Matrix-related threads
+REVISED: Advanced MirCrew search diagnostic with improved relevance matching
+Handles partial/substring matches like "Matrix" in "Animatrix"
 """
 
 import sys
@@ -15,11 +15,37 @@ from urllib.parse import urljoin
 sys.path.insert(0, os.path.dirname(__file__))
 from login import MirCrewLogin
 
+def contains_partial_match(query_term, title_text):
+    """Flexible matching that handles partial/strings within words"""
+    # Direct substring match (handles "Matrix" in "Animatrix")
+    if query_term in title_text:
+        return True
+
+    # Handle cases like "Dexter:" in "Dexter: Resurrection" (phrase prefix)
+    for word in title_text.split():
+        # Check if query term is at start of word
+        if word.lower().startswith(query_term) or query_term.startswith(word.lower()):
+            return True
+
+        # Handle hyphenated words
+        if '-' in word:
+            parts = word.split('-')
+            if any(part.lower() == query_term or part.lower().startswith(query_term) for part in parts):
+                return True
+
+        # Handle words with colons
+        if ':' in word:
+            parts = word.split(':')
+            if any(part.lower().strip() == query_term or part.lower().strip().startswith(query_term) for part in parts):
+                return True
+
+    return False
+
 def diagnostic_search(query="Matrix", test_cases=None):
     """Test different search parameters to find what works"""
 
-    print(f"🔍 Diagnostic search for '{query}' on mircrew-releases.org")
-    print("=" * 60)
+    print(f"🔍 Enhanced Diagnostic search for '{query}' on mircrew-releases.org")
+    print("=" * 70)
 
     # Set up session and authenticate
     session = requests.Session()
@@ -41,31 +67,28 @@ def diagnostic_search(query="Matrix", test_cases=None):
         categories = ['51', '52', '29', '30']
     else:
         # Movies categories for Matrix (default)
-        categories = ['25', '26']
+        categories = ['25', '26', '28']
 
     # Test cases to try
     if not test_cases:
         test_cases = [
             {
-                'name': 'Simple search with titles+content',
-                'params': [ ('keywords', query), ('scf', '1'), ('sr', 'topics'), ('sk', 't'),
-                           ('sd', 'd'), ('st', '0'), ('ch', '50') ] + [('fid[]', cat) for cat in categories]
+                'name': 'Enhanced Title-only search',
+                'params': [ ('keywords', query), ('sf', 'titleonly'), ('sr', 'topics'),
+                           ('sk', 't'), ('sd', 'd'), ('st', '0'), ('ch', '50'), ('t', '0') ] +
+                           [('fid[]', cat) for cat in categories]
             },
             {
-                'name': 'Title-only search (Working Method)',
-                'params': [ ('keywords', query), ('sf', 'titleonly'), ('sr', 'topics'), ('sk', 't'),
-                           ('sd', 'd'), ('st', '0'), ('ch', '50') ] + [('fid[]', cat) for cat in categories[:2]]
-            },
-            {
-                'name': 'Title search with multiple categories',
-                'params': [ ('keywords', query), ('sf', 'titleonly'), ('sr', 'topics'), ('sk', 't'),
-                           ('sd', 'd'), ('st', '0'), ('ch', '50') ] + [('fid[]', cat) for cat in categories]
+                'name': 'Title + Content search',
+                'params': [ ('keywords', query), ('scf', '1'), ('sr', 'topics'),
+                           ('sk', 't'), ('sd', 'd'), ('st', '0'), ('ch', '50') ] +
+                           [('fid[]', cat) for cat in categories]
             }
         ]
 
     for i, test_case in enumerate(test_cases, 1):
         print(f"\n🔬 Test {i}: {test_case['name']}")
-        print("-" * 40)
+        print("-" * 50)
 
         try:
             # Execute search
@@ -78,81 +101,56 @@ def diagnostic_search(query="Matrix", test_cases=None):
             # Parse results
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Look for different sources of results
+            # Find all potential search result links
             results = []
+            count_elements = soup.find_all(['li', 'div'], class_=re.compile(r'row|bg2'))
 
-            # Check for search results container
-            result_containers = soup.find_all(['li', 'div'], class_=re.compile(r'row|search-result'))
+            for element in count_elements:
+                # Look for topic titles
+                link = element.find('a', class_='topictitle')
+                if link and link.get('href'):
+                    full_text = element.get_text().strip()
+                    if full_text and len(full_text) > 5:  # Filter meaningful entries
+                        results.append(full_text[:150])  # Truncate long titles
 
-            for container in result_containers[:10]:  # Limit to first 10
-                title_links = container.find_all('a', class_='topictitle')
-                for link in title_links:
-                    title = link.get_text(strip=True)
-                    if title and len(title) > 2:  # Filter meaningful titles
-                        results.append(title[:100])  # Truncate long titles
+            print(f"📊 Found {len(results)} total result entries")
 
-            print(f"📊 Found {len(results)} potential results:")
-
-            # IMPROVED: Enhanced relevance detection for partial/substring matches
+            # Enhanced relevance filtering
+            search_terms = query.lower().split()
             relevant = []
             not_relevant = []
 
-            # Also handle partial matches like "Matrix" in "Animatrix", "Dexter:" in "Dexter: Resurrection"
-            for result in results:
+            for result in results[:100]:  # Process first 100 results
                 result_lower = result.lower()
-                search_terms = query.lower().split()
-
-                # Check if ALL search terms appear in the title (with substring flexibility)
-                all_terms_match = True
-                for term in search_terms:
-                    if not self._contains_partial_match(term, result_lower):
-                        all_terms_match = False
-                        break
-
-                if all_terms_match:
+                # Use improved matching algorithm
+                if all(contains_partial_match(term, result_lower) for term in search_terms):
                     relevant.append(result)
                 else:
                     not_relevant.append(result)
 
-    def _contains_partial_match(self, query_term, title_text):
-        """Flexible matching that handles partial/strings within words"""
-        # Direct substring match (handles "Matrix" in "Animatrix")
-        if query_term in title_text:
-            return True
-
-        # Handle cases like "Dexter:" in "Dexter: Resurrection" (phrase prefix)
-        for word in title_text.split():
-            # Check if query term is at start of word
-            if word.lower().startswith(query_term) or query_term.startswith(word.lower()):
-                return True
-
-            # Handle hyphenated words
-            if '-' in word:
-                parts = word.split('-')
-                if any(part.lower() == query_term or part.lower().startswith(query_term) for part in parts):
-                    return True
-
-        return False
-
             print(f"   ✅ {query}-related: {len(relevant)}")
             if relevant:
-                for title in relevant[:5]:  # Show first 5
-                    print(f"      • {title}")
+                for i, title in enumerate(relevant[:5]):  # Show first 5
+                    print(f"      {i+1}. {title}")
 
             print(f"   ❌ Not {query}-related: {len(not_relevant)}")
             if not_relevant and len(not_relevant) <= 3:
-                for title in not_relevant:
+                for i, title in enumerate(not_relevant[:3]):
                     print(f"      • {title}")
 
         except Exception as e:
             print(f"❌ Search failed: {e}")
 
-    print("\n" + "=" * 60)
-    print("Diagnostic complete! Review results above.")
+    print("\n" + "=" * 70)
+    print("Enhanced diagnostic complete! Results above show improved relevance detection.")
+    print("\n🔍 This now detects:")
+    print("   ✅ 'Matrix' in 'Animatrix' (substring match)")
+    print("   ✅ 'Dexter:' in 'Dexter: Resurrection' (prefix match)")
+    print("   ✅ Multi-term combinations with flexible positioning")
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description='MirCrew Search Diagnostics')
+    parser = argparse.ArgumentParser(description='Enhanced MirCrew Search Diagnostics')
     parser.add_argument('-q', '--query', default='Matrix', help='Search term to test')
     args = parser.parse_args()
 
