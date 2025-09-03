@@ -8,7 +8,6 @@ Runs the indexer as a subprocess and returns Torznab XML over HTTP
 import os
 import sys
 import subprocess
-import logging
 from flask import Flask, request, Response, send_file
 from typing import Optional, Dict, Any
 import urllib.parse
@@ -17,9 +16,12 @@ import time
 from datetime import datetime
 import io
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Set up centralized logging
+from ..utils.logging_utils import setup_logging, get_logger
+
+# Configure logging with centralized config
+setup_logging()
+logger = get_logger(__name__)
 
 class MirCrewAPIServer:
     """
@@ -143,23 +145,6 @@ class MirCrewAPIServer:
             return result
         else:
             raise ValueError(f"Unsupported type: {type(data)}")
-            """Simple bencode implementation"""
-            if isinstance(data, int):
-                return f'i{data}e'.encode()
-            elif isinstance(data, str):
-                return f'{len(data)}:{data}'.encode()
-            elif isinstance(data, bytes):
-                return f'{len(data)}:'.encode() + data
-            elif isinstance(data, list):
-                return b'l' + b''.join(self._bencode(item) for item in data) + b'e'
-            elif isinstance(data, dict):
-                result = b'd'
-                for key, value in sorted(data.items()):
-                    result += self._bencode(key) + self._bencode(value)
-                result += b'e'
-                return result
-            else:
-                raise ValueError(f"Unsupported type: {type(data)}")
 
     def _extract_magnet_hash(self, magnet_url: str) -> str:
         """Extract 40-character btih hash from magnet URL"""

@@ -7,8 +7,14 @@ Scrapes all magnet links from each thread and returns them as separate results
 import sys
 import os
 import argparse
-import logging
 import re
+
+# Set up centralized logging
+from ..utils.logging_utils import setup_logging, get_logger
+
+# Configure logging with centralized config
+setup_logging()
+logger = get_logger(__name__)
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
@@ -18,8 +24,7 @@ from urllib.parse import urljoin
 sys.path.insert(0, os.path.dirname(__file__))
 from login import MirCrewLogin
 
-# Configure detailed logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging is now configured centrally in setup_logging() above
 
 class MirCrewScraper:
     """

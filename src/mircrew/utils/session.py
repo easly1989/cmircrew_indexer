@@ -1,10 +1,16 @@
 """Centralized session management"""
-import logging
 from typing import Optional
+
+# Set up centralized logging
+from .logging_utils import setup_logging, get_logger
+
+# Configure logging with centralized config
+setup_logging()
+logger = get_logger(__name__)
 import requests
 from ..config.settings import MirCrewConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class SessionManager:
     """Manages authentication and session state across components"""

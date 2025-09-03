@@ -6,8 +6,14 @@ Clicks the "Thanks" button to unlock hidden magnet links on forum threads.
 
 import sys
 import os
-import logging
 import re
+
+# Set up centralized logging
+from ..utils.logging_utils import setup_logging, get_logger
+
+# Configure logging with centralized config
+setup_logging()
+logger = get_logger(__name__)
 from typing import Optional
 from bs4 import Tag
 import requests
@@ -19,8 +25,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from login import MirCrewLogin
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging is now configured centrally in setup_logging() above
 
 class MagnetUnlocker:
     """

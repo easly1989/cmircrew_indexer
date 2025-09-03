@@ -10,8 +10,14 @@ python mircrew_indexer.py -q "search query" [-season N] [-ep N]
 import sys
 import os
 import argparse
-import logging
 import re
+
+# Set up centralized logging
+from ..utils.logging_utils import setup_logging, get_logger
+
+# Configure logging with centralized config
+setup_logging()
+logger = get_logger(__name__)
 from datetime import datetime
 from typing import List, Dict, Optional
 import requests
@@ -25,8 +31,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from login import MirCrewLogin
 from magnet_unlock_script import MagnetUnlocker
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging is now configured centrally in setup_logging() above
 
 class MirCrewIndexer:
     """
@@ -87,7 +92,7 @@ class MirCrewIndexer:
             # REPLACE with login client's session (diagnostic approach)
             self.session = self.login_handler.session
             self.logged_in = True
-            logging.info("✅ Successfully authenticated")
+            logger.info("✅ Successfully authenticated")
 
             # Initialize magnet unlocker with the same session
             self.unlocker = MagnetUnlocker()
@@ -96,7 +101,7 @@ class MirCrewIndexer:
 
             return True
         else:
-            logging.error("❌ Authentication failed")
+            logger.error("❌ Authentication failed")
             return False
 
     def build_search_query(self, q: str, season: Optional[str] = None, ep: Optional[str] = None) -> str:
@@ -179,7 +184,7 @@ class MirCrewIndexer:
             for cat_id in categories:
                 search_params.append(('fid[]', cat_id))
 
-            logging.info(f"🔍 Searching for: '{keywords}' with {len(search_params)} params")
+            logger.info(f"🔍 Searching for: '{keywords}' with {len(search_params)} params")
 
             # Ensure session is available before accessing attributes
             if not self.session:
@@ -195,23 +200,23 @@ class MirCrewIndexer:
 
             # DEBUG OUTPUT: Compare with diagnostic - full HTML analysis
             if q == "Matrix":  # Add debug output for testing
-                logging.info(f"🔍 DEBUG: Response status: {response.status_code}")
-                logging.info(f"🔍 DEBUG: Response URL: {response.url}")
-                logging.info(f"🔍 DEBUG: Content-Type: {response.headers.get('content-type', 'unknown')}")
-                logging.info(f"🔍 DEBUG: Content-Length: {len(response.text)}")
-                logging.info(f"🔍 DEBUG: Full response text sample: {response.text[:1000]}...")
-                logging.info(f"🔍 DEBUG: Looking for HTML elements:")
+                logger.info(f"🔍 DEBUG: Response status: {response.status_code}")
+                logger.info(f"🔍 DEBUG: Response URL: {response.url}")
+                logger.info(f"🔍 DEBUG: Content-Type: {response.headers.get('content-type', 'unknown')}")
+                logger.info(f"🔍 DEBUG: Content-Length: {len(response.text)}")
+                logger.info(f"🔍 DEBUG: Full response text sample: {response.text[:1000]}...")
+                logger.info(f"🔍 DEBUG: Looking for HTML elements:")
                 if '<html' in response.text.lower():
-                    logging.info("✅ HTML found - normal HTML response")
+                    logger.info("✅ HTML found - normal HTML response")
                 if '<?xml' in response.text:
-                    logging.info("⚠️ XML found - forum returning XML instead of HTML")
+                    logger.info("⚠️ XML found - forum returning XML instead of HTML")
                 if '<li class="row"' in response.text:
-                    logging.info("✅ Found search result rows - parsing should work")
+                    logger.info("✅ Found search result rows - parsing should work")
                 else:
-                    logging.info("❌ No search result rows found - parsing will fail")
+                    logger.info("❌ No search result rows found - parsing will fail")
                 soup = BeautifulSoup(response.text, 'html.parser')
-                logging.info(f"🔍 DEBUG: Found {len(soup.find_all('li', class_='row'))} 'li.row' elements")
-                logging.info(f"🔍 DEBUG: Found {len(soup.find_all(['li', 'div'], class_=re.compile(r'row|bg2')))} potential result elements")
+                logger.info(f"🔍 DEBUG: Found {len(soup.find_all('li', class_='row'))} 'li.row' elements")
+                logger.info(f"🔍 DEBUG: Found {len(soup.find_all(['li', 'div'], class_=re.compile(r'row|bg2')))} potential result elements")
 
             # For each thread, fetch and extract magnets
             all_magnets = []
@@ -223,7 +228,7 @@ class MirCrewIndexer:
             return self._build_torznab_xml(all_magnets)
 
         except Exception as e:
-            logging.error(f"❌ Search error: {str(e)}")
+            logger.error(f"❌ Search error: {str(e)}")
             return self._error_response(str(e))
 
     def _parse_search_results(self, html: str, keywords: str = "") -> List[Dict]:
@@ -239,7 +244,7 @@ class MirCrewIndexer:
         # Step 1: EXACT SAME element finding as diagnostic_fixed.py
         elements = soup.find_all(['li', 'div'], class_=re.compile(r'row|bg2'))
 
-        logging.info(f"🔍 Parser found {len(elements)} raw elements")
+        logger.info(f"🔍 Parser found {len(elements)} raw elements")
 
         # Step 2: EXACT SAME processing as diagnostic_fixed.py
         results = []
@@ -248,24 +253,24 @@ class MirCrewIndexer:
 
         for element in elements:
             processed_count += 1
-            logging.debug(f"🔍 Processing element {processed_count}...")
+            logger.debug(f"🔍 Processing element {processed_count}...")
 
             # Find topic title link - EXACT diagnostic approach
             link = element.find('a', class_='topictitle')
 
             if not link or not link.get('href'):
-                logging.debug(f"❌ Element {processed_count}: No title link")
+                logger.debug(f"❌ Element {processed_count}: No title link")
                 continue
 
             # Get full text like diagnostic does
             full_text = element.get_text().strip()
             if not full_text or len(full_text) < 10:
-                logging.debug(f"❌ Element {processed_count}: Full text too short ({len(full_text)} chars)")
+                logger.debug(f"❌ Element {processed_count}: Full text too short ({len(full_text)} chars)")
                 continue
 
             # Success! This element has valid content
             valid_count += 1
-            logging.debug(f"✅ Element {processed_count}: Valid content found")
+            logger.debug(f"✅ Element {processed_count}: Valid content found")
 
             # Like diagnostic: add to results array
             results.append(full_text[:150])
@@ -274,7 +279,7 @@ class MirCrewIndexer:
             if len(results) >= 25:
                 break
 
-        logging.info(f"📝 Parser found {len(results)} valid threads from {len(elements)} raw elements")
+        logger.info(f"📝 Parser found {len(results)} valid threads from {len(elements)} raw elements")
 
         # Convert results to expected thread format, now with proper URLs
         threads = []
@@ -327,7 +332,7 @@ class MirCrewIndexer:
             if not thread_id.isdigit():
                 return self._error_response(f"Invalid thread ID: {thread_id}. Must be numeric.")
 
-            logging.info(f"🔍 Direct thread search for ID: {thread_id}")
+            logger.info(f"🔍 Direct thread search for ID: {thread_id}")
 
             # Construct thread URL
             thread_url = f"{self.base_url}/viewtopic.php?t={thread_id}"
@@ -389,11 +394,11 @@ class MirCrewIndexer:
             xml_lines.extend(['</channel>', '</rss>'])
 
             xml_output = '\n'.join(xml_lines)
-            logging.info(f"📊 Direct thread search complete: {len(all_magnets)} magnets from thread {thread_id}")
+            logger.info(f"📊 Direct thread search complete: {len(all_magnets)} magnets from thread {thread_id}")
             return xml_output
 
         except Exception as e:
-            logging.error(f"❌ Error in direct thread search: {str(e)}")
+            logger.error(f"❌ Error in direct thread search: {str(e)}")
             return self._error_response(f"Error searching thread: {str(e)}")
 
     def _contains_partial_match(self, query_term: str, title_text: str) -> bool:
@@ -452,11 +457,11 @@ class MirCrewIndexer:
 
         try:
             if not self.session or not self.unlocker:
-                logging.error("❌ Session or unlocker not available")
+                logger.error("❌ Session or unlocker not available")
                 return magnets
 
             thread_url = thread['details']
-            logging.info(f"🔓 Attempting to unlock magnets for thread: {thread_url}")
+            logger.info(f"🔓 Attempting to unlock magnets for thread: {thread_url}")
 
             # Use the unlocker to get magnets (this will handle thanks button clicking)
             magnet_urls = self.unlocker.extract_magnets_with_unlock(thread_url)
@@ -484,13 +489,13 @@ class MirCrewIndexer:
                     'peers': 2,    # Default (not available in HTML)
                 })
 
-                logging.debug(f"🔗 Extracted magnet title: '{magnet_title}'")
-                logging.debug(f"🔗 Magnet: {magnet_url[:50]}...")
+                logger.debug(f"🔗 Extracted magnet title: '{magnet_title}'")
+                logger.debug(f"🔗 Magnet: {magnet_url[:50]}...")
 
         except Exception as e:
-            logging.error(f"❌ Error extracting magnets from {thread['details']}: {str(e)}")
+            logger.error(f"❌ Error extracting magnets from {thread['details']}: {str(e)}")
 
-        logging.info(f"🧲 Found {len(magnets)} magnet(s) in thread: {thread['title'][:50]}...")
+        logger.info(f"🧲 Found {len(magnets)} magnet(s) in thread: {thread['title'][:50]}...")
         return magnets
 
     def _parse_size(self, title: str) -> Optional[str]:
@@ -628,15 +633,16 @@ class MirCrewIndexer:
 
     def _error_response(self, message: str) -> str:
         """Return error XML response"""
-        return f'''<?xml version="1.0" encoding="UTF-8"?>
+        escaped_message = self._escape_xml(message)
+        return '''<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <item>
 <title>Error</title>
-<description>{self._escape_xml(message)}</description>
+<description>''' + escaped_message + '''</description>
 </item>
 </channel>
-</rss>'''
+</rss>'''.replace('{{message}}', escaped_message)
 
 
 def main():
