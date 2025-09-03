@@ -159,8 +159,13 @@ class MirCrewIndexer:
             # REVERT TO WORKING DIAGNOSTIC SEARCH PARAMETERS
             search_url = f"{self.base_url}/search.php"
 
-            # Determine appropriate categories based on query
-            categories = ['25', '26'] if not 'dexter' in keywords.lower() else ['51', '52']
+            # Determine appropriate categories based on query content
+            # Use both Movie and TV categories by default for broader results
+            # Category IDs from mircrew.yml: 25=Movies/SD, 26=Movies/HD, 51=TV/SD, 52=TV/HD
+            categories = ['25', '26', '51', '52']  # Search both Movies and TV by default
+
+            # If specific category is requested through cat parameter, filter accordingly
+            # But for now, search broadly to avoid missing results
 
             search_params = [
                 ('keywords', keywords),
@@ -296,11 +301,12 @@ class MirCrewIndexer:
             threads.append({
                 'title': title_link.get_text().strip()[:100],
                 'details': details_url,  # REAL URL for magnet extraction!
-                'category': 'Movies' if not 'dexter' in keywords.lower() else 'TV',
-                'category_id': '25' if not 'dexter' in keywords.lower() else '52',
+                # Use broader category mapping - default to Movies unless clearly TV content
+                'category': 'TV' if any(term in keywords.lower() for term in ['s01', 's02', 's03', 'season', 'series', 'dexter', 'game of thrones', 'stranger things']) else 'Movies',
+                'category_id': '52' if any(term in keywords.lower() for term in ['s01', 's02', 's03', 'season', 'series', 'dexter', 'game of thrones', 'stranger things']) else '25',
                 'pub_date': datetime.now().isoformat(),
                 'size': '1GB',
-                'forum_id': '25' if not 'dexter' in keywords.lower() else '52',
+                'forum_id': '52' if any(term in keywords.lower() for term in ['s01', 's02', 's03', 'season', 'series', 'dexter', 'game of thrones', 'stranger things']) else '25',
                 'full_text': full_text
             })
 

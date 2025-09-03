@@ -96,10 +96,20 @@ class MirCrewAPIServer:
         params['imdbid'] = request.args.get('imdbid', '')  # IMDB ID
         params['tvdbid'] = request.args.get('tvdbid', '')  # TVDB ID
 
-        # Detect Prowlarr test requests - they often have no search parameters
+        # Detect Prowlarr test requests - only when ALL parameters are None or empty AND no category filtering
+        # Be more conservative to avoid treating legitimate searches as test requests
+        all_empty_or_none = (
+            params.get('q') in ['', None] and
+            params.get('season') in ['', None] and
+            params.get('ep') in ['', None] and
+            params.get('imdbid') in ['', None] and
+            params.get('tvdbid') in ['', None]
+        )
+        # Only treat as test request if NO category is specified AND all search params are empty/None
         params['is_test_request'] = (
             params['t'] == 'search' and
-            not any([params.get('q'), params.get('season'), params.get('ep'), params.get('imdbid'), params.get('tvdbid')])
+            all_empty_or_none and
+            not params.get('cat')  # If category is specified, it's not a test request
         )
 
         return params
