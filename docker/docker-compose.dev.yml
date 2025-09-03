@@ -5,17 +5,24 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
-    container_name: mircrew-indexer-api
+    container_name: mircrew-indexer-api-dev
     restart: unless-stopped
     ports:
-      - "9118:9118"  # Expose on host port
+      - "9118:9118"  # API port
+      - "5678:5678"  # Debug port for debugpy
     networks:
-      - saltbox  # Connect to your Prowlarr network
+      - saltbox
     environment:
       - PYTHONUNBUFFERED=1
-      # MirCrew credentials - REPLACE with your actual values
+      - DEBUG=true
+      # MirCrew credentials - USE environment variables or .env file
       - MIRCREW_USERNAME=your_mircrew_username_here
       - MIRCREW_PASSWORD=your_mircrew_password_here
+    volumes:
+      - ../src:/app/src:ro
+      - ../config:/app/config:ro
+    # Development command with reload (assuming FastAPI/Flask with reload capability)
+    command: ["uvicorn", "mircrew.api.server:app", "--host", "0.0.0.0", "--port", "9118", "--reload"]
     # Health check
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:9118/health', timeout=5)"]
@@ -30,7 +37,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-# Use your existing saltbox network (don't create a new one)
+# Use your existing saltbox network
 networks:
   saltbox:
     external: true
