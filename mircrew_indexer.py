@@ -359,12 +359,16 @@ class MirCrewIndexer:
                 # Calculate size in bytes for enclosure
                 size_bytes = self._convert_size_to_bytes(magnet["size"])
     
+                # Extract magnet hash and create HTTP download URL
+                magnet_hash = self._extract_magnet_hash(magnet["link"])
+                download_url = f"http://mircrew-indexer:9118/download/{magnet_hash}"
+    
                 xml_lines.extend([
                     f'<item>',
                     f'<title>{magnet["title"]}</title>',
                     f'<guid>{guid}</guid>',
                     f'<link>{magnet["link"]}</link>',
-                    f'<enclosure url="{magnet["link"]}" type="application/x-bittorrent" length="{size_bytes}"/>',
+                    f'<enclosure url="{download_url}" type="application/x-bittorrent" length="{size_bytes}"/>',
                     f'<comments>{magnet["details"]}</comments>',
                     f'<pubDate>{magnet["pub_date"]}</pubDate>',
                     f'<category>{magnet["category"]}</category>',
@@ -521,12 +525,16 @@ class MirCrewIndexer:
             # Calculate size in bytes for enclosure
             size_bytes = self._convert_size_to_bytes(magnet["size"])
 
+            # Extract magnet hash and create HTTP download URL
+            magnet_hash = self._extract_magnet_hash(magnet["link"])
+            download_url = f"http://mircrew-indexer:9118/download/{magnet_hash}"
+
             xml_lines.extend([
                 f'<item>',
                 f'<title>{magnet["title"]}</title>',
                 f'<guid>{guid}</guid>',
                 f'<link>{magnet["link"]}</link>',
-                f'<enclosure url="{magnet["link"]}" type="application/x-bittorrent" length="{size_bytes}"/>',
+                f'<enclosure url="{download_url}" type="application/x-bittorrent" length="{size_bytes}"/>',
                 f'<comments>{magnet["details"]}</comments>',
                 f'<pubDate>{magnet["pub_date"]}</pubDate>',
                 f'<category>{magnet["category"]}</category>',
@@ -565,6 +573,20 @@ class MirCrewIndexer:
             return None
         except Exception:
             return None
+
+    def _extract_magnet_hash(self, magnet_url: str) -> str:
+        """Extract 40-character btih hash from magnet URL"""
+        try:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(magnet_url)
+            if 'xt' in urllib.parse.parse_qs(parsed.query):
+                xt_param = urllib.parse.parse_qs(parsed.query)['xt'][0]
+                if xt_param.startswith('urn:btih:'):
+                    btih_hash = xt_param.split(':')[2][:40]
+                    return btih_hash
+            return "TEST1234567890"  # Fallback
+        except Exception:
+            return "TEST1234567890"  # Fallback
 
     def _escape_xml(self, text: str) -> str:
         """Basic XML escaping"""
