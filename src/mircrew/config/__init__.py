@@ -1,0 +1,1 @@
+"""MirCrew Configuration Module"""

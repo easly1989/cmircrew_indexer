@@ -143,33 +143,6 @@ class MirCrewAPIServer:
             return result
         else:
             raise ValueError(f"Unsupported type: {type(data)}")
-
-        def _create_torrent_from_magnet(self, magnet_hash: str) -> bytes:
-            """Create a .torrent file from magnet link hash"""
-            try:
-                # Create basic torrent structure
-                # This is a simplified approach - in production, you'd want proper torrent creation
-                torrent_data = {
-                    'info': {
-                        'name': f'mircrew-{magnet_hash}',
-                        'piece length': 1048576,  # 1MB
-                        'length': 1073741824,  # 1GB (dummy size)
-                        'pieces': b'\x00' * 20,  # Dummy piece hash
-                    },
-                    'announce': 'http://127.0.0.1:6969/announce',  # Dummy tracker
-                    'creation date': int(datetime.now().timestamp()),
-                    'created by': 'MirCrew Indexer API',
-                    'info hash': magnet_hash
-                }
-
-                # Simple bencode implementation
-                return self._bencode(torrent_data)
-
-            except Exception as e:
-                logger.error(f"Error creating torrent: {str(e)}")
-                raise
-
-        def _bencode(self, data) -> bytes:
             """Simple bencode implementation"""
             if isinstance(data, int):
                 return f'i{data}e'.encode()
