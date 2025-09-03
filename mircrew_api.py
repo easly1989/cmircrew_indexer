@@ -232,11 +232,6 @@ class MirCrewAPIServer:
 <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
     <channel>
         <item>
-            <title>Total results</title>
-            <pubDate>2025-09-02T14:55:57.082Z</pubDate>
-            <torznab:attr name="total" value="1"/>
-        </item>
-        <item>
             <title>MirCrew.Indexer.Test.Response.SAMPLE.avi</title>
             <guid>magnet-test-0</guid>
             <link>magnet:?xt=urn:btih:TEST1234567890TEST1234567890TEST12&amp;dn=MirCrew.Indexer.Test.Response.SAMPLE.avi</link>
