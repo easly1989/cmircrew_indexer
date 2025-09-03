@@ -13,10 +13,8 @@ from urllib.parse import urljoin
 # Load env vars
 load_dotenv()
 
-# Import login (temporarily)
-import sys
-sys.path.insert(0, os.path.dirname(__file__))
-from login import MirCrewLogin
+# Import MirCrewLogin from the main package
+from src.mircrew.core.auth import MirCrewLogin
 
 def analyze_thread_structure(query="Dexter", max_threads=3):
     """Analyze thread HTML to understand magnet title and seed/peer structure"""
@@ -121,7 +119,7 @@ def analyze_thread_structure(query="Dexter", max_threads=3):
                 if parent:
                     parent_text = parent.get_text()
                     # Look for patterns after magnet
-                    magnet_match = re.search(r'magnet:\?xt=urn:btih:[a-zA-Z0-9]{40}[^\\[]*\\[(.*?)[\\]]', parent_text)
+                    magnet_match = re.search(r'magnet:\?xt=urn:btih:[a-zA-Z0-9]{40}[^\[]*\[(.*?)\]', parent_text)
                     if magnet_match:
                         magnet_title = magnet_match.group(1).strip()
                         print(f"      TITLE (pattern): '{magnet_title[:100]}'")
@@ -162,7 +160,7 @@ def analyze_thread_structure(query="Dexter", max_threads=3):
                     if magnet_pos != -1:
                         after_magnet = post.get_text()[magnet_pos:]
                         # Look for bracketed content or quoted content after magnet
-                        bracket_match = re.search(r'magnet:[^\\[]*\\[(.*?)[\\]]', after_magnet)
+                        bracket_match = re.search(r'magnet:[^\[]*\[(.*?)\]', after_magnet)
                         if bracket_match:
                             magnet_title = bracket_match.group(1).strip()
                             print(f"      TITLE (context): '{magnet_title[:100]}...'")

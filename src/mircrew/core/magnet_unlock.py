@@ -23,7 +23,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 # Add current directory to path for login import
 sys.path.insert(0, os.path.dirname(__file__))
 
-from login import MirCrewLogin
+from .auth import MirCrewLogin
 
 # Logging is now configured centrally in setup_logging() above
 
@@ -51,10 +51,10 @@ class MagnetUnlocker:
             # REPLACE with login client's session (diagnostic approach)
             self.session = self.login_handler.session
             self.logged_in = True
-            logging.info("✅ Successfully authenticated")
+            logger.info("✅ Successfully authenticated")
             return True
         else:
-            logging.error("❌ Authentication failed")
+            logger.error("❌ Authentication failed")
             return False
 
     def _extract_first_post_id(self, soup: BeautifulSoup) -> Optional[str]:
@@ -71,7 +71,7 @@ class MagnetUnlocker:
                 button_id = thanks_buttons[0].get('id', '')
                 if isinstance(button_id, str) and button_id.startswith('lnk_thanks_post'):
                     post_id = button_id.replace('lnk_thanks_post', '')
-                    logging.info(f"✅ Found first thanks button: {button_id}, extracted post ID: {post_id}")
+                    logger.info(f"✅ Found first thanks button: {button_id}, extracted post ID: {post_id}")
                     return post_id
 
             # Fallback: Look for any elements with thanks in ID and extract post_id
@@ -83,7 +83,7 @@ class MagnetUnlocker:
                     match = re.search(r'(\d+)', elem_id)
                     if match:
                         post_id = match.group(1)
-                        logging.info(f"✅ Extracted post ID from thanks element: {elem_id} -> {post_id}")
+                        logger.info(f"✅ Extracted post ID from thanks element: {elem_id} -> {post_id}")
                         return post_id
 
             # OLD approaches as backup
@@ -107,11 +107,11 @@ class MagnetUnlocker:
                     if match:
                         return match.group(1)
 
-            logging.info("⚠️ Could not find thanks buttons or post IDs - magnets may already be unlocked")
+            logger.info("⚠️ Could not find thanks buttons or post IDs - magnets may already be unlocked")
             return None
 
-        except Exception as e:
-            logging.error(f"❌ Error extracting post ID: {str(e)}")
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.error(f"❌ Data error extracting post ID: {type(e).__name__}: {str(e)}")
             return None
 
     def _find_thanks_button(self, soup: BeautifulSoup, post_id: str) -> Optional[str]:
@@ -124,7 +124,7 @@ class MagnetUnlocker:
             thanks_button = soup.find('a', id=button_id) or soup.find('button', id=button_id) or soup.find(attrs={'id': button_id})
 
             if thanks_button:
-                logging.info(f"✅ Found thanks button: {button_id}")
+                logger.info(f"✅ Found thanks button: {button_id}")
                 return button_id
 
             # Try alternative patterns - use find_all with filtering
@@ -141,14 +141,14 @@ class MagnetUnlocker:
                     elem_id = elem.get('id', '')
                     if isinstance(elem_id, str) and pattern in elem_id.lower():
                         button_id = elem_id
-                        logging.info(f"✅ Found thanks button (alternative): {button_id}")
+                        logger.info(f"✅ Found thanks button (alternative): {button_id}")
                         return button_id
 
-            logging.info(f"⚠️ Thanks button not found for post {post_id} (may already be unlocked)")
+            logger.info(f"⚠️ Thanks button not found for post {post_id} (may already be unlocked)")
             return None
 
         except Exception as e:
-            logging.error(f"❌ Error finding thanks button: {str(e)}")
+            logger.error(f"❌ Error finding thanks button: {str(e)}")
             return None
 
     def _click_thanks_button(self, thread_url: str, button_id: str) -> bool:
@@ -157,7 +157,7 @@ class MagnetUnlocker:
         """
         try:
             if not self.session:
-                logging.error("❌ Session not available")
+                logger.error("❌ Session not available")
                 return False
 
             # Get the post ID from the button ID
@@ -174,12 +174,12 @@ class MagnetUnlocker:
             # ./viewtopic.php?f=51&p=515262&thanks=515262&to_id=...
             thanks_url = f"{self.base_url}/viewtopic.php?f={forum_id}&p={post_id}&thanks={post_id}&to_id=0"
 
-            logging.info(f"🔄 Attempting to click thanks button for post {post_id} (Approach 1)")
+            logger.info(f"🔄 Attempting to click thanks button for post {post_id} (Approach 1)")
 
             # First, get the page to see what the thanks button href actually is
             response = self.session.get(thread_url, timeout=30)
             if response.status_code != 200:
-                logging.error(f"❌ Can't get thread page to find thanks URL")
+                logger.error(f"❌ Can't get thread page to find thanks URL")
                 return False
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -192,7 +192,7 @@ class MagnetUnlocker:
                     if actual_href.startswith('./'):
                         actual_href = actual_href[2:]  # Remove leading ./
                     actual_thanks_url = f"{self.base_url}/{actual_href}"
-                    logging.info(f"🔗 Using actual button href: {actual_thanks_url}")
+                    logger.info(f"🔗 Using actual button href: {actual_thanks_url}")
                     thanks_url = actual_thanks_url
 
             # Try the AJAX call
@@ -206,19 +206,19 @@ class MagnetUnlocker:
 
             # If GET fails, try POST
             if response.status_code != 200:
-                logging.info("🔄 GET failed, trying POST approach...")
+                logger.info("🔄 GET failed, trying POST approach...")
                 response = self.session.post(thanks_url, headers={**headers, 'Content-Type': 'application/x-www-form-urlencoded'})
 
             if response.status_code in [200, 302] or 'thanks' in response.text.lower():
-                logging.info("✅ Thanks button clicked successfully")
+                logger.info("✅ Thanks button clicked successfully")
                 return True
             else:
-                logging.warning(f"⚠️ Thanks button click failed with status: {response.status_code}")
+                logger.warning(f"⚠️ Thanks button click failed with status: {response.status_code}")
                 # Even if we get an error, continue - the magnets might become available after a refresh
                 return True
 
         except Exception as e:
-            logging.error(f"❌ Error clicking thanks button: {str(e)}")
+            logger.error(f"❌ Error clicking thanks button: {str(e)}")
             return False
 
     def unlock_magnets(self, thread_url: str) -> bool:
@@ -226,16 +226,16 @@ class MagnetUnlocker:
         Main function to unlock magnets for a thread URL
         """
         if not self.session:
-            logging.error("❌ Session not available")
+            logger.error("❌ Session not available")
             return False
 
         try:
             # Step 1: Fetch the thread page
-            logging.info(f"📄 Fetching thread: {thread_url}")
+            logger.info(f"📄 Fetching thread: {thread_url}")
             response = self.session.get(thread_url, timeout=30)
 
             if response.status_code != 200:
-                logging.error(f"❌ Failed to fetch thread: {response.status_code}")
+                logger.error(f"❌ Failed to fetch thread: {response.status_code}")
                 return False
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -243,26 +243,26 @@ class MagnetUnlocker:
             # Step 2: Extract first post ID
             post_id = self._extract_first_post_id(soup)
             if not post_id:
-                logging.info("⚠️ No first post ID found - assuming magnets are already unlocked")
+                logger.info("⚠️ No first post ID found - assuming magnets are already unlocked")
                 return True
 
             # Step 3: Look for thanks button
             button_id = self._find_thanks_button(soup, post_id)
             if not button_id:
-                logging.info("⚠️ Thanks button not found - magnets are likely already unlocked")
+                logger.info("⚠️ Thanks button not found - magnets are likely already unlocked")
                 return True
 
             # Step 4: Click the thanks button
             success = self._click_thanks_button(thread_url, button_id)
             if success:
-                logging.info("✅ Magnet unlocking process completed")
+                logger.info("✅ Magnet unlocking process completed")
                 return True
             else:
-                logging.warning("⚠️ Magnet unlocking may have failed")
+                logger.warning("⚠️ Magnet unlocking may have failed")
                 return False
 
         except Exception as e:
-            logging.error(f"❌ Error in unlock_magnets: {str(e)}")
+            logger.error(f"❌ Error in unlock_magnets: {str(e)}")
             return False
 
     def extract_magnets_with_unlock(self, thread_url: str) -> list:
@@ -271,19 +271,19 @@ class MagnetUnlocker:
         ONLY extracts from the FIRST POST to avoid duplicates
         """
         if not self.session:
-            logging.error("❌ Session not available")
+            logger.error("❌ Session not available")
             return []
 
         # Try to unlock first (will handle the case where it's already unlocked)
         unlock_success = self.unlock_magnets(thread_url)
         if not unlock_success:
-            logging.warning("⚠️ Unlock process failed, but continuing with extraction")
+            logger.warning("⚠️ Unlock process failed, but continuing with extraction")
 
         # Now extract magnets (give page a moment to update if unlock happened)
         try:
             response = self.session.get(thread_url, timeout=30)
             if response.status_code != 200:
-                logging.error(f"❌ Failed to fetch thread after unlock: {response.status_code}")
+                logger.error(f"❌ Failed to fetch thread after unlock: {response.status_code}")
                 return []
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -323,12 +323,12 @@ class MagnetUnlocker:
                     seen_posts.add(post_text)
                     unique_post_containers.append(post)
 
-            logging.info(f"📝 Found {len(unique_post_containers)} unique post containers")
+            logger.info(f"📝 Found {len(unique_post_containers)} unique post containers")
 
             # Take the FIRST post container (chronologically first)
             if unique_post_containers:
                 first_post = unique_post_containers[0]
-                logging.info("✅ Using first post container for magnet extraction")
+                logger.info("✅ Using first post container for magnet extraction")
 
                 # Extract magnets ONLY from this first post
                 for link in first_post.find_all('a', href=magnet_pattern):
@@ -340,9 +340,9 @@ class MagnetUnlocker:
                         # Avoid duplicates
                         if magnet_url not in magnets:
                             magnets.append(magnet_url)
-                            logging.debug(f"🧲 Found magnet from first post: {magnet_url[:50]}...")
+                            logger.debug(f"🧲 Found magnet from first post: {magnet_url[:50]}...")
             else:
-                logging.warning("⚠️ No post containers found, extracting from entire page")
+                logger.warning("⚠️ No post containers found, extracting from entire page")
                 # Extreme fallback: search the entire page
                 for link in soup.find_all('a', href=magnet_pattern):
                     magnet_url = link['href'].strip()
@@ -352,13 +352,13 @@ class MagnetUnlocker:
                     if magnet_pattern.match(magnet_url):
                         if magnet_url not in magnets:
                             magnets.append(magnet_url)
-                            logging.debug(f"🧲 Found magnet (page search): {magnet_url[:50]}...")
+                            logger.debug(f"🧲 Found magnet (page search): {magnet_url[:50]}...")
 
-            logging.info(f"📋 Extracted {len(magnets)} magnets from first post after unlock attempt")
+            logger.info(f"📋 Extracted {len(magnets)} magnets from first post after unlock attempt")
             return magnets
 
         except Exception as e:
-            logging.error(f"❌ Error extracting magnets: {str(e)}")
+            logger.error(f"❌ Error extracting magnets: {str(e)}")
             return []
 
 
@@ -367,7 +367,7 @@ def diagnose_thanks_buttons():
     unlocker = MagnetUnlocker()
 
     if not unlocker.authenticate():
-        logging.error("❌ Authentication failed")
+        logger.error("❌ Authentication failed")
         return False
 
     test_url = "https://mircrew-releases.org/viewtopic.php?t=180404&hilit=Dexter+Resurrection"
@@ -381,13 +381,13 @@ def diagnose_thanks_buttons():
             thanks_elements = soup.find_all(attrs={'id': re.compile(r'thanks|thank', re.IGNORECASE)})
             thanks_elements += soup.find_all(attrs={'href': re.compile(r'thanks|thank', re.IGNORECASE)})
 
-            logging.info(f"🎯 Found {len(thanks_elements)} thanks-related elements:")
+            logger.info(f"🎯 Found {len(thanks_elements)} thanks-related elements:")
             for elem in thanks_elements[:5]:  # Show first 5
-                logging.info(f"  - Tag: {elem.name}, ID: {elem.get('id')}, Class: {elem.get('class')}, Href: {elem.get('href', '')[:50]}...")
+                logger.info(f"  - Tag: {elem.name}, ID: {elem.get('id')}, Class: {elem.get('class')}, Href: {elem.get('href', '')[:50]}...")
 
             return True
         else:
-            logging.error(f"Failed to fetch page: {response.status_code}")
+            logger.error(f"Failed to fetch page: {response.status_code}")
     return False
 
 def test_unlocker():
@@ -395,7 +395,7 @@ def test_unlocker():
     unlocker = MagnetUnlocker()
 
     if not unlocker.authenticate():
-        logging.error("❌ Authentication failed")
+        logger.error("❌ Authentication failed")
         return False
 
     # Test with a known thread URL
@@ -404,12 +404,12 @@ def test_unlocker():
     magnets = unlocker.extract_magnets_with_unlock(test_url)
 
     if magnets:
-        logging.info(f"✅ Found {len(magnets)} magnets!")
+        logger.info(f"✅ Found {len(magnets)} magnets!")
         for i, magnet in enumerate(magnets[:3]):  # Show first 3
-            logging.info(f"🔗 Magnet {i+1}: {magnet[:100]}...")
+            logger.info(f"🔗 Magnet {i+1}: {magnet[:100]}...")
         return True
     else:
-        logging.warning("⚠️ No magnets found or unlock failed")
+        logger.warning("⚠️ No magnets found or unlock failed")
         return False
 
 if __name__ == "__main__":

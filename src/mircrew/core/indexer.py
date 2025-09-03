@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 MIRCrew Indexer Script - Custom Torznab-compatible indexer for mircrew-releases.org
 Scrapes all magnet links from each thread and returns them as separate results.
@@ -25,11 +25,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, parse_qs
 from requests import Session
 
-# Add current directory to path for login import
-sys.path.insert(0, os.path.dirname(__file__))
-
-from login import MirCrewLogin
-from magnet_unlock_script import MagnetUnlocker
+from .auth import MirCrewLogin
+from .magnet_unlock import MagnetUnlocker
 
 # Logging is now configured centrally in setup_logging() above
 
@@ -155,7 +152,7 @@ class MirCrewIndexer:
 
             # EXACT keyword processing from mircrew.yml
             # 1. Strip season/episode patterns
-            keywords = re.sub(r'\\b(?:[SE]\\d{1,4}){1,2}\\b', '', keywords).strip()
+            keywords = re.sub(r'\b(?:[SE]\d{1,4}){1,2}\b', '', keywords).strip()
             # 2. Add + prefix to each word if multiple words
             if keywords and ' ' in keywords:
                 words = [word.strip() for word in keywords.split() if word.strip()]
@@ -190,7 +187,15 @@ class MirCrewIndexer:
             if not self.session:
                 return self._error_response("Session not available for search")
     
-            response = self.session.get(search_url, params=search_params, timeout=30, allow_redirects=True)
+            # Enhanced error handling with better error messages
+            try:
+                response = self.session.get(search_url, params=search_params, timeout=30, allow_redirects=True)
+            except requests.exceptions.Timeout:
+                logger.error("⏱️ Request timed out after 30 seconds")
+                raise ConnectionError("Request timed out - forum may be overloaded")
+            except requests.exceptions.ConnectionError:
+                logger.error("🔌 Connection error - unable to reach forum")
+                raise ConnectionError("Unable to connect to MirCrew forum - check network connectivity")
 
             if response.status_code != 200:
                 return self._error_response(f"Search failed with status {response.status_code}")
@@ -227,9 +232,15 @@ class MirCrewIndexer:
             # Build and return Torznab XML
             return self._build_torznab_xml(all_magnets)
 
+        except (requests.exceptions.RequestException, ConnectionError, TimeoutError) as e:
+            logger.error(f"❌ Network error during search: {type(e).__name__}: {str(e)}")
+            return self._error_response(f"Network error: {type(e).__name__}")
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.error(f"❌ Data validation error during search: {type(e).__name__}: {str(e)}")
+            return self._error_response(f"Data validation error: {type(e).__name__}")
         except Exception as e:
-            logger.error(f"❌ Search error: {str(e)}")
-            return self._error_response(str(e))
+            logger.error(f"❌ Unexpected search error: {type(e).__name__}: {str(e)}")
+            return self._error_response(f"Unexpected error: {type(e).__name__}")
 
     def _parse_search_results(self, html: str, keywords: str = "") -> List[Dict]:
         """
@@ -397,9 +408,15 @@ class MirCrewIndexer:
             logger.info(f"📊 Direct thread search complete: {len(all_magnets)} magnets from thread {thread_id}")
             return xml_output
 
+        except (requests.exceptions.RequestException, ConnectionError, TimeoutError) as e:
+            logger.error(f"❌ Network error in direct thread search: {type(e).__name__}: {str(e)}")
+            return self._error_response(f"Network error searching thread: {type(e).__name__}")
+        except (ValueError, TypeError) as e:
+            logger.error(f"❌ Validation error in direct thread search: {type(e).__name__}: {str(e)}")
+            return self._error_response(f"Validation error searching thread: {type(e).__name__}")
         except Exception as e:
-            logger.error(f"❌ Error in direct thread search: {str(e)}")
-            return self._error_response(f"Error searching thread: {str(e)}")
+            logger.error(f"❌ Unexpected error in direct thread search: {type(e).__name__}: {str(e)}")
+            return self._error_response(f"Unexpected error searching thread: {type(e).__name__}")
 
     def _contains_partial_match(self, query_term: str, title_text: str) -> bool:
         """EXACT SAME enhanced matching as diagnostic_fixed.py"""
@@ -461,12 +478,25 @@ class MirCrewIndexer:
                 return magnets
 
             thread_url = thread['details']
+            if not thread_url or not isinstance(thread_url, str):
+                logger.error("❌ Invalid thread URL format")
+                return magnets
+
             logger.info(f"🔓 Attempting to unlock magnets for thread: {thread_url}")
 
             # Use the unlocker to get magnets (this will handle thanks button clicking)
             magnet_urls = self.unlocker.extract_magnets_with_unlock(thread_url)
 
+            if not isinstance(magnet_urls, list):
+                logger.error(f"❌ Invalid magnet URLs returned from unlocker: {type(magnet_urls)}")
+                return magnets
+
             for magnet_url in magnet_urls:
+                # Validation check for magnet URL
+                if not isinstance(magnet_url, str) or not magnet_url.startswith('magnet:'):
+                    logger.debug(f"⚠️ Skipping invalid magnet URL: {magnet_url[:50]}...")
+                    continue
+
                 # 🆕 EXTRACT MAGNET TITLE FROM dn PARAMETER
                 display_name = self._extract_display_name(magnet_url)
 
@@ -492,8 +522,10 @@ class MirCrewIndexer:
                 logger.debug(f"🔗 Extracted magnet title: '{magnet_title}'")
                 logger.debug(f"🔗 Magnet: {magnet_url[:50]}...")
 
+        except (requests.exceptions.RequestException, ValueError, TypeError, AttributeError) as e:
+            logger.error(f"❌ Error extracting magnets from {thread.get('details', 'unknown')}: {type(e).__name__}: {str(e)}")
         except Exception as e:
-            logger.error(f"❌ Error extracting magnets from {thread['details']}: {str(e)}")
+            logger.error(f"❌ Unexpected error extracting magnets from {thread.get('details', 'unknown')}: {type(e).__name__}: {str(e)}")
 
         logger.info(f"🧲 Found {len(magnets)} magnet(s) in thread: {thread['title'][:50]}...")
         return magnets
@@ -566,38 +598,64 @@ class MirCrewIndexer:
         Extract the display name (filename) from the magnet link's dn parameter
         """
         try:
+            if not isinstance(magnet_url, str) or not magnet_url:
+                return None
+
             # Parse the URL to get query parameters
             parsed_url = urlparse(magnet_url)
+            if parsed_url.scheme != 'magnet':
+                logger.debug(f"⚠️ Not a magnet URL: {magnet_url[:50]}...")
+                return None
+
             query_params = parse_qs(parsed_url.query)
 
             # Look for the dn (display name) parameter
             if 'dn' in query_params:
                 display_name = query_params['dn'][0]  # Take first value
-                return display_name
+                if isinstance(display_name, str) and display_name.strip():
+                    return display_name.strip()
 
             return None
-        except Exception:
+        except (ValueError, TypeError) as e:
+            logger.debug(f"⚠️ Error parsing display name from magnet URL: {type(e).__name__}")
             return None
 
     def _extract_magnet_hash(self, magnet_url: str) -> str:
         """Extract 40-character btih hash from magnet URL"""
         try:
+            if not isinstance(magnet_url, str) or not magnet_url:
+                logger.warning("⚠️ Invalid magnet URL provided for hash extraction")
+                return ""
+
+            if not magnet_url.startswith('magnet:'):
+                logger.warning(f"⚠️ Not a magnet URL: {magnet_url[:50]}...")
+                return ""
+
             import urllib.parse
             parsed = urllib.parse.urlparse(magnet_url)
-            if 'xt' in urllib.parse.parse_qs(parsed.query):
-                xt_param = urllib.parse.parse_qs(parsed.query)['xt'][0]
-                if xt_param.startswith('urn:btih:'):
+            query_params = urllib.parse.parse_qs(parsed.query)
+
+            if 'xt' in query_params:
+                xt_param = query_params['xt'][0]
+                if isinstance(xt_param, str) and xt_param.startswith('urn:btih:'):
                     btih_hash = xt_param.split(':')[2][:40]
-                    return btih_hash
-            return "TEST1234567890"  # Fallback
-        except Exception:
-            return "TEST1234567890"  # Fallback
+                    if len(btih_hash) == 40 and btih_hash.isalnum():
+                        return btih_hash
+                    else:
+                        logger.warning(f"⚠️ Invalid btih hash format: {btih_hash}")
+
+            logger.warning(f"⚠️ No valid btih parameter found in: {magnet_url[:100]}...")
+            return ""
+        except (ValueError, TypeError) as e:
+            logger.warning(f"⚠️ Error extracting magnet hash: {type(e).__name__}: {str(e)}")
+            return ""
 
     def _escape_xml(self, text: str) -> str:
         """Basic XML escaping"""
         if not text:
             return ""
-        replacements = [('&', '&'), ('<', '<'), ('>', '>'), ('"', '"'), ("'", ''')]
+        # XML entity replacements in correct order
+        replacements = [('&', '&amp;'), ('<', '&lt;'), ('>', '&gt;'), ('"', '&quot;'), ("'", '&apos;')]
         for old, new in replacements:
             text = text.replace(old, new)
         return text
@@ -634,15 +692,16 @@ class MirCrewIndexer:
     def _error_response(self, message: str) -> str:
         """Return error XML response"""
         escaped_message = self._escape_xml(message)
-        return '''<?xml version="1.0" encoding="UTF-8"?>
+        xml_template = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
 <item>
 <title>Error</title>
-<description>''' + escaped_message + '''</description>
+<description>{}</description>
 </item>
 </channel>
-</rss>'''.replace('{{message}}', escaped_message)
+</rss>"""
+        return xml_template.format(escaped_message)
 
 
 def main():

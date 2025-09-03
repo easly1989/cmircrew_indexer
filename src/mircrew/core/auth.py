@@ -4,7 +4,7 @@ import time
 import random
 from typing import Tuple, Optional
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -67,6 +67,7 @@ class MirCrewLogin:
         username = os.getenv('MIRCREW_USERNAME')
         password = os.getenv('MIRCREW_PASSWORD')
 
+        # NOTE: Avoid logging sensitive information for security
         logger.debug(f"Environment variables loaded: {bool(username)} / {bool(password) if password else False}")
 
         if not username or not password:
@@ -105,7 +106,7 @@ class MirCrewLogin:
         login_form = None
 
         # Strategy 1: Look for form with login action
-        login_form = soup.find('form', action=lambda x: x and 'mode=login' in x)
+        login_form = soup.find('form', action=lambda x: x is not None and 'mode=login' in x)
 
         # Strategy 2: Look for form containing username input
         if not login_form:
@@ -119,7 +120,7 @@ class MirCrewLogin:
         if not login_form:
             login_form = soup.find('form')
 
-        if login_form:
+        if login_form and isinstance(login_form, Tag):
             # Extract all inputs from the form
             inputs = login_form.find_all('input')
             for input_field in inputs:
@@ -266,8 +267,14 @@ class MirCrewLogin:
             logger.error(f"💀 LOGIN FAILED: All {max_attempts} attempts exhausted")
             return False
 
+        except (requests.exceptions.RequestException, ConnectionError, TimeoutError) as e:
+            logger.error(f"💥 Network error during login: {type(e).__name__}: {str(e)}")
+            return False
+        except (ValueError, TypeError) as e:
+            logger.error(f"💥 Data validation error during login: {type(e).__name__}: {str(e)}")
+            return False
         except Exception as e:
-            logger.error(f"💥 Critical login error: {str(e)}")
+            logger.error(f"💥 Critical login error: {type(e).__name__}: {str(e)}")
             return False
 
     def validate_login(self, response: requests.Response) -> bool:
@@ -345,8 +352,14 @@ class MirCrewLogin:
             logger.warning("⚠️ Unable to clearly determine login status")
             return False
 
+        except (requests.exceptions.RequestException, ConnectionError, TimeoutError) as e:
+            logger.error(f"💥 Network error during validation: {type(e).__name__}: {str(e)}")
+            return False
+        except (ValueError, TypeError) as e:
+            logger.error(f"💥 Data error during validation: {type(e).__name__}: {str(e)}")
+            return False
         except Exception as e:
-            logger.error(f"💥 Validation error: {str(e)}")
+            logger.error(f"💥 Validation error: {type(e).__name__}: {str(e)}")
             return False
 
     def is_logged_in(self) -> bool:
@@ -402,10 +415,10 @@ def test_login():
         else:
             logger.warning("⚠️ Session persistence test FAILED")
 
-        logger.info(".2f")
+        logger.info(f"{time.time() - start_time:.2f}")
     else:
         logger.error("💀 TEST FAILED: Login unsuccessful")
-        logger.info(".2f")
+        logger.info(f"{time.time() - start_time:.2f}")
 
     return success
 

@@ -20,9 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
-# Import login module
-sys.path.insert(0, os.path.dirname(__file__))
-from login import MirCrewLogin
+from .auth import MirCrewLogin
 
 # Logging is now configured centrally in setup_logging() above
 
@@ -57,7 +55,7 @@ class MirCrewScraper:
 
         login_client = MirCrewLogin()
         if not login_client.login():
-            raise Exception("Authentication failed")
+            raise RuntimeError("Authentication failed - unable to establish session with MirCrew forum")
 
         self.session = login_client.session
 
@@ -96,7 +94,8 @@ class MirCrewScraper:
         response = self.session.get(search_url, params=search_params, timeout=30, allow_redirects=True)
 
         if response.status_code != 200:
-            raise Exception(f"Search failed with status {response.status_code}")
+            logger.error(f"❌ Search failed with HTTP status {response.status_code}")
+            raise ConnectionError(f"Search request failed: HTTP {response.status_code}")
 
         # Parse search results
         threads = self._parse_search_page(response.text)
@@ -148,7 +147,7 @@ class MirCrewScraper:
                 })
 
             except Exception as e:
-                logging.debug(f"Failed to parse thread row: {e}")
+                logger.debug(f"⚠️ Failed to parse thread row: {type(e).__name__}: {str(e)}")
                 continue
 
         return threads
@@ -162,7 +161,7 @@ class MirCrewScraper:
             response = self.session.get(thread_info['url'], timeout=30)
 
             if response.status_code != 200:
-                logging.warning(f"Failed to fetch thread: {response.status_code}")
+                logger.warning(f"⚠️ Failed to fetch thread: HTTP {response.status_code}")
                 return magnets
 
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -192,7 +191,6 @@ class MirCrewScraper:
                     for magnet_match in text_magnets:
                         if magnet_match.startswith('magnet:'):
                             self._process_magnet_url(magnet_match, thread_info, magnets, found_magnets)
-"""
             # Also search in any element containing "magnet:"
             for element in soup.find_all(string=re.compile(r'magnet:\?xt=urn:btih', re.IGNORECASE)):
                 # Extract the magnet URL from the parent element
@@ -202,10 +200,12 @@ class MirCrewScraper:
                     if magnet_url.startswith('magnet:'):
                         self._process_magnet_url(magnet_url, thread_info, magnets, found_magnets)
 
+        except (requests.exceptions.RequestException, ValueError, TypeError) as e:
+            logger.error(f"❌ Error extracting magnets from thread {thread_info.get('url', 'unknown')}: {type(e).__name__}: {str(e)}")
         except Exception as e:
-            logging.error(f"Failed to extract magnets from thread {thread_info['url']}: {e}")
+            logger.error(f"❌ Unexpected error extracting magnets from thread {thread_info.get('url', 'unknown')}: {type(e).__name__}: {str(e)}")
 
-        return magnets
+        return magnets or []
 
     def _process_magnet_url(self, magnet_url, thread_info, magnets, found_magnets):
         """Process and add a magnet URL to results"""
@@ -225,13 +225,6 @@ class MirCrewScraper:
                 'category': thread_info['category']
             })
 
-    def _format_results(self, magnets):
-        """Format results as human-readable text"""
-
-        except Exception as e:
-            logging.error(f"Failed to extract magnets from thread {thread_info['url']}: {e}")
-
-        return magnets
 
     def _format_results(self, magnets):
         """Format results as human-readable text"""

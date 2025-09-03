@@ -11,9 +11,9 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
-# Import login module
-sys.path.insert(0, os.path.dirname(__file__))
-from login import MirCrewLogin
+# Import MirCrewLogin from core auth
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.mircrew.core.auth import MirCrewLogin
 
 def contains_partial_match(query_term, title_text):
     """Flexible matching that handles partial/strings within words"""

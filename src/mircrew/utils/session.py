@@ -10,8 +10,6 @@ logger = get_logger(__name__)
 import requests
 from ..config.settings import MirCrewConfig
 
-logger = get_logger(__name__)
-
 class SessionManager:
     """Manages authentication and session state across components"""
 
@@ -20,7 +18,7 @@ class SessionManager:
         self.session: Optional[requests.Session] = None
         self.authenticated = False
 
-    def get_session(self) -> requests.Session:
+    def get_session(self):
         """Get authenticated session, creating if needed"""
         if not self.session or not self.authenticated:
             self._create_session()

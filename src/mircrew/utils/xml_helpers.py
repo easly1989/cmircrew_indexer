@@ -1,6 +1,6 @@
 """XML parsing and generation utilities"""
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 
@@ -35,7 +35,7 @@ class XMLHelper:
         """Escape XML special characters"""
         if not text:
             return ""
-        replacements = [('<', '<'), ('>', '>'), ('"', '"'), ("'", ''')]
+        replacements = [('&', '&amp;amp;'), ('<', '&amp;lt;'), ('>', '&gt;'), ('"', '&quot;'), ("'", '&apos;')]
         for old, new in replacements:
             text = text.replace(old, new)
         return text
@@ -63,7 +63,7 @@ class TorznabXMLBuilder:
     def __init__(self):
         self.xml_helper = XMLHelper()
 
-    def build_capabilities(self, categories: Dict[str, Any] = None) -> str:
+    def build_capabilities(self, categories: Optional[Dict[str, Any]] = None) -> str:
         """Build Torznab capabilities XML"""
         caps = self.xml_helper.create_element('caps')
 

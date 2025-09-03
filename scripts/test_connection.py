@@ -3,8 +3,13 @@
 Test basic connection to mircrew forum to debug search issues
 """
 
+import sys
+import os
 import requests
-from login import MirCrewLogin
+
+# Add src to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.mircrew.core.auth import MirCrewLogin
 
 def test_basic_connection():
     print("🔍 Testing basic connection to mircrew forum...")
