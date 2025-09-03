@@ -27,7 +27,6 @@ wheels/
 MANIFEST
 
 # Virtual Environments
-.env
 .venv
 env/
 venv/
@@ -70,6 +69,7 @@ tmp/
 
 # Testing
 .coverage
+htmlcov/
 .pytest_cache/
 .tox/
 nosetests.xml

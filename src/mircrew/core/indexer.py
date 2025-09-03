@@ -11,6 +11,8 @@ import sys
 import os
 import argparse
 import re
+import yaml
+from pathlib import Path
 
 # Set up centralized logging
 from ..utils.logging_utils import setup_logging, get_logger
@@ -36,7 +38,13 @@ class MirCrewIndexer:
     Returns all magnet links from each thread as separate results
     """
 
-    def __init__(self):
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialize indexer with config path.
+
+        Args:
+            config_path: Path to mircrew.yml config file (optional, defaults to project config)
+        """
         self.base_url = "https://mircrew-releases.org"
         self.session: Optional[Session] = None
         self.logged_in = False
@@ -44,8 +52,41 @@ class MirCrewIndexer:
         # Initialize magnet unlocker - will share the same session
         self.unlocker: Optional[MagnetUnlocker] = None
 
-        # Category mappings from mircrew.yml (id -> cat string)
-        self.cat_mappings = {
+        # Load configuration
+        self.config_path = config_path or self._get_config_path()
+        self.cat_mappings, self.default_sizes = self._load_config()
+
+    def _get_config_path(self) -> str:
+        """Get path to mircrew.yml config file."""
+        # Try multiple possible paths
+        possible_paths = [
+            # Relative to current file
+            os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config', 'mircrew.yml'),
+            # Relative to project root
+            os.path.join(os.getcwd(), 'config', 'mircrew.yml'),
+            # Absolute path for Docker
+            '/app/config/mircrew.yml',
+        ]
+
+        for path in possible_paths:
+            if os.path.isfile(path):
+                logger.debug(f"Using config file: {path}")
+                return path
+
+        # Fallback: use current working directory
+        fallback_path = os.path.join(os.getcwd(), 'config', 'mircrew.yml')
+        logger.warning(f"Config file not found, using fallback: {fallback_path}")
+        return fallback_path
+
+    def _load_config(self) -> tuple:
+        """
+        Load category mappings and default sizes from config file.
+
+        Returns:
+            Tuple of (cat_mappings dict, default_sizes dict)
+        """
+        # Default fallback mappings
+        cat_mappings = {
             '25': 'Movies',
             '26': 'Movies',
             '51': 'TV',
@@ -67,14 +108,79 @@ class MirCrewIndexer:
             '46': 'Audio'
         }
 
-        # Default sizes by category (from mircrew.yml)
-        self.default_sizes = {
+        default_sizes = {
             'Movies': '10GB',
             'TV': '2GB',
             'TV/Documentary': '2GB',
             'Books': '512MB',
             'Audio': '512MB'
         }
+
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+
+            if config and 'caps' in config and 'categorymappings' in config['caps']:
+                loaded_mappings = {}
+
+                # Build mappings from config categories
+                for mapping in config['caps']['categorymappings']:
+                    if isinstance(mapping, dict) and 'id' in mapping and 'cat' in mapping:
+                        forum_id = str(mapping['id'])
+                        category = mapping['cat']
+                        loaded_mappings[forum_id] = category
+
+                if loaded_mappings:
+                    cat_mappings = loaded_mappings
+                    logger.info(f"Loaded {len(loaded_mappings)} category mappings from config")
+
+                # Extract size mappings from config if available
+                if 'fields' in config and 'size_default' in config['fields']:
+                    config_sizes = config['fields']['size_default']
+                    if 'case' in config_sizes:
+                        for case_rule, size in config_sizes['case'].items():
+                            # Parse forum IDs from case rules like "a[href*=\"f=25\"]"
+                            import re
+                            match = re.search(r'f=(\d+)', case_rule)
+                            if match and size:
+                                forum_id = match.group(1)
+                                # Convert category object to category id mapping
+                                for mapping in config['caps']['categorymappings']:
+                                    if isinstance(mapping, dict) and str(mapping.get('id', '')) == forum_id:
+                                        # Set size for this category
+                                        size_str = str(size)
+                                        category_name = mapping.get('cat', '')
+                                        if category_name in ['Movies', 'TV', 'Books', 'Audio'] and size_str:
+                                            default_sizes[category_name] = size_str
+                                        break
+
+        except (FileNotFoundError, yaml.YAMLError, KeyError) as e:
+            logger.warning(f"Failed to load config from {self.config_path}: {type(e).__name__}")
+            logger.info("Using hardcoded fallback mappings")
+
+        except Exception as e:
+            logger.error(f"Unexpected error loading config: {type(e).__name__}: {str(e)}")
+            logger.info("Using hardcoded fallback mappings")
+
+        return cat_mappings, default_sizes
+
+    def _extract_forum_id_from_url(self, url: str) -> Optional[str]:
+        """
+        Extract forum ID from thread URL.
+
+        Args:
+            url: Thread URL like https://mircrew-releases.org/viewtopic.php?f=25&t=1234
+
+        Returns:
+            Forum ID string or None if not found
+        """
+        try:
+            parsed_url = urlparse(url)
+            query_params = dict(parse_qs(parsed_url.query))
+            return query_params.get('f', [None])[0]
+        except (ValueError, TypeError):
+            logger.debug(f"Could not extract forum ID from URL: {url}")
+            return None
 
     def authenticate(self) -> bool:
         """Authenticate using internal MirCrewLogin - EXACT DIAGNOSTIC APPROACH"""
@@ -226,6 +332,14 @@ class MirCrewIndexer:
             # For each thread, fetch and extract magnets
             all_magnets = []
             for thread in threads:
+                # Set category ID based on loaded config
+                if 'forum_id' in thread and str(thread['forum_id']) in self.cat_mappings:
+                    thread['category_id'] = thread['forum_id']
+
+                # Apply size defaults based on loaded config
+                if thread.get('category') in self.default_sizes:
+                    thread['size'] = self.default_sizes[thread['category']]
+
                 thread_magnets = self._extract_thread_magnets(thread)
                 all_magnets.extend(thread_magnets)
 
@@ -309,15 +423,22 @@ class MirCrewIndexer:
             # Extract the REAL URL from the title link (critical fix!)
             details_url = urljoin(self.base_url, title_link['href'])
 
+            # Extract forum ID from URL to determine category
+            forum_id = self._extract_forum_id_from_url(details_url)
+            category = self.cat_mappings.get(str(forum_id), 'TV')
+            category_id = str(forum_id) if forum_id else '52'
+
+            # Apply size defaults from config
+            default_size = self.default_sizes.get(category, '1GB')
+
             threads.append({
                 'title': title_link.get_text().strip()[:100],
                 'details': details_url,  # REAL URL for magnet extraction!
-                # Use broader category mapping - default to Movies unless clearly TV content
-                'category': 'TV' if any(term in keywords.lower() for term in ['s01', 's02', 's03', 'season', 'series', 'dexter', 'game of thrones', 'stranger things']) else 'Movies',
-                'category_id': '52' if any(term in keywords.lower() for term in ['s01', 's02', 's03', 'season', 'series', 'dexter', 'game of thrones', 'stranger things']) else '25',
+                'category': category,
+                'category_id': category_id,
                 'pub_date': datetime.now().isoformat(),
-                'size': '1GB',
-                'forum_id': '52' if any(term in keywords.lower() for term in ['s01', 's02', 's03', 'season', 'series', 'dexter', 'game of thrones', 'stranger things']) else '25',
+                'size': default_size,  # Use config-based size defaults
+                'forum_id': forum_id,
                 'full_text': full_text
             })
 
@@ -347,14 +468,20 @@ class MirCrewIndexer:
 
             # Construct thread URL
             thread_url = f"{self.base_url}/viewtopic.php?t={thread_id}"
+
+            # Try to get category info from first post (will be updated when magnet is fetched)
+            # For now use TV defaults which covers most content
+            category_id = '52'  # TV default
+            category = 'TV'
+
             thread_data = {
                 'title': f"Thread {thread_id}",
                 'details': thread_url,
-                'category': 'TV',  # Default category
-                'category_id': '52',  # TV category
+                'category': category,
+                'category_id': category_id,
                 'pub_date': datetime.now().isoformat(),
-                'size': '1GB',  # Default size
-                'forum_id': '51'  # Default forum ID
+                'size': self.default_sizes.get(category, '2GB'),  # Use config default
+                'forum_id': category_id
             }
 
             # Extract magnets from this specific thread
@@ -379,17 +506,24 @@ class MirCrewIndexer:
                 magnet_hash = self._extract_magnet_hash(magnet["link"])
                 download_url = f"http://mircrew-indexer:9118/download/{magnet_hash}"
     
+                # Properly escape all XML content
+                title_escaped = self._escape_xml(magnet["title"])
+                link_escaped = self._escape_xml(magnet["link"])
+                details_escaped = self._escape_xml(magnet["details"])
+                category_escaped = self._escape_xml(magnet["category"])
+                description_escaped = self._escape_xml(magnet.get("description", ""))
+    
                 xml_lines.extend([
                     f'<item>',
-                    f'<title>{magnet["title"]}</title>',
+                    f'<title>{title_escaped}</title>',
                     f'<guid>{guid}</guid>',
-                    f'<link>{magnet["link"]}</link>',
+                    f'<link>{link_escaped}</link>',
                     f'<enclosure url="{download_url}" type="application/x-bittorrent" length="{size_bytes}"/>',
-                    f'<comments>{magnet["details"]}</comments>',
+                    f'<comments>{details_escaped}</comments>',
                     f'<pubDate>{magnet["pub_date"]}</pubDate>',
-                    f'<category>{magnet["category"]}</category>',
+                    f'<category>{category_escaped}</category>',
                     f'<size>{size_bytes}</size>',
-                    f'<description>{magnet.get("description", "")}</description>',
+                    f'<description>{description_escaped}</description>',
     
                     # Torznab-specific attributes
                     f'<torznab:attr name="category" value="{magnet["category_id"]}"/>',
@@ -532,17 +666,44 @@ class MirCrewIndexer:
 
     def _parse_size(self, title: str) -> Optional[str]:
         """
-        Parse size information from thread title
-        """
-        # Look for size patterns like 1.5GB, 500MB, etc.
-        size_match = re.search(r'\b(\d+(?:\.\d+)?)\s*(GB|MB|TB|KiB|MiB|GiB)\b', title, re.IGNORECASE)
-        if size_match:
-            return size_match.group(1) + size_match.group(2).upper()
+        Parse size information from thread title with enhanced patterns.
 
-        # Alternative pattern: (1GB), [2.5MB], etc.
-        alt_match = re.search(r'[\(\[])(\d+(?:\.\d+)?)\s*(GB|MB|TB|KiB|MiB|GiB)[\)\]]', title, re.IGNORECASE)
-        if alt_match:
-            return alt_match.group(1) + alt_match.group(2).upper()
+        Args:
+            title: Thread title to parse
+
+        Returns:
+            Size string (e.g., '1.5GB', '500MB') or None if not found
+        """
+        if not title:
+            return None
+
+        # Patterns ordered by specificity (most specific first)
+        patterns = [
+            # Standard format: 1.5GB, 500MB, etc.
+            r'\b(\d+(?:[\.,]\d{1,2})?)\s*(GB|MB|TB|KiB|MiB|GiB|B)\b',
+            # With parentheses: (1.5GB), [500MB]
+            r'[\(\[\{](\d+(?:[\.,]\d{1,2})?)\s*(GB|MB|TB|KiB|MiB|GiB|B)[\)\]\}]',
+            # Italian format: 1,5 GB, 500 MB
+            r'\b(\d+[\.,]\d{1,2})\s*(GB|MB|TB|KiB|MiB|GiB|B)\b',
+            # Simple bytes: 1024MB
+            r'(\d+(?:[\.,]\d{1,2})?)(GB|MB|TB|KiB|MiB|GiB|B)',
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, title, re.IGNORECASE)
+            if matches:
+                # Take the first match and normalize
+                size_num, size_unit = matches[0]
+                size_unit = size_unit.upper()
+
+                # Normalize Italian decimal separator
+                size_num = size_num.replace(',', '.')
+
+                # Handle 'B' suffix (assume MB if no unit)
+                if size_unit == 'B':
+                    size_unit = 'MB'
+
+                return f"{size_num}{size_unit}"
 
         return None
 
@@ -566,17 +727,24 @@ class MirCrewIndexer:
             magnet_hash = self._extract_magnet_hash(magnet["link"])
             download_url = f"http://mircrew-indexer:9118/download/{magnet_hash}"
 
+            # Properly escape all XML content in direct thread search
+            title_escaped = self._escape_xml(magnet["title"])
+            link_escaped = self._escape_xml(magnet["link"])
+            details_escaped = self._escape_xml(magnet["details"])
+            category_escaped = self._escape_xml(magnet["category"])
+            description_escaped = self._escape_xml(magnet.get("description", ""))
+
             xml_lines.extend([
                 f'<item>',
-                f'<title>{magnet["title"]}</title>',
+                f'<title>{title_escaped}</title>',
                 f'<guid>{guid}</guid>',
-                f'<link>{magnet["link"]}</link>',
+                f'<link>{link_escaped}</link>',
                 f'<enclosure url="{download_url}" type="application/x-bittorrent" length="{size_bytes}"/>',
-                f'<comments>{magnet["details"]}</comments>',
+                f'<comments>{details_escaped}</comments>',
                 f'<pubDate>{magnet["pub_date"]}</pubDate>',
-                f'<category>{magnet["category"]}</category>',
+                f'<category>{category_escaped}</category>',
                 f'<size>{size_bytes}</size>',
-                f'<description>{magnet.get("description", "")}</description>',
+                f'<description>{description_escaped}</description>',
 
                 # Torznab-specific attributes
                 f'<torznab:attr name="category" value="{magnet["category_id"]}"/>',
@@ -661,33 +829,87 @@ class MirCrewIndexer:
         return text
 
     def _convert_size_to_bytes(self, size_str: str) -> int:
-        """Convert size string like '1.5GB' to bytes"""
-        if not size_str:
-            return 0
+        """
+        Convert size string to bytes with comprehensive unit support.
 
-        size_match = re.match(r'(\d+(?:\.\d+)?)(GB|MB|TB|KiB|MiB|GiB)', size_str.upper())
+        Args:
+            size_str: Size string like '1.5GB', '500MB', etc.
 
-        if not size_match:
-            # Try parsing as pure number or add GB default
-            try:
-                return int(float(size_str) * 1024**3)  # Assume GB
-            except ValueError:
-                return 1024**3  # 1GB default
+        Returns:
+            Size in bytes as integer
+        """
+        if not size_str or not isinstance(size_str, str):
+            return 1073741824  # Default to 1GB
 
-        value = float(size_match.group(1))
-        unit = size_match.group(2)
+        # Clean the string and extract components
+        size_str = size_str.upper().strip()
 
-        # Convert to bytes
+        # Handle Italian decimal separator
+        size_str = size_str.replace(',', '.')
+
+        # Comprehensive unit mapping with both decimal (1000^x) and binary (1024^x) variants
         multipliers = {
-            'KiB': 1024,
-            'MiB': 1024**2,
-            'GiB': 1024**3,
-            'MB': 1000**2,
-            'GB': 1000**3,
-            'TB': 1000**4
+            # Binary units ( power of 2 )
+            'KIB': 1024,
+            'MIB': 1024**2,
+            'GIB': 1024**3,
+            'TIB': 1024**4,
+
+            # Decimal units ( power of 10 )
+            'KB': 10**3,
+            'MB': 10**6,
+            'GB': 10**9,
+            'TB': 10**12,
+
+            # Legacy units (assuming decimal)
+            'K': 10**3,
+            'M': 10**6,
+            'G': 10**9,
+            'T': 10**12,
+
+            # Special cases
+            'B': 1,       # Just bytes
         }
 
-        return int(value * multipliers.get(unit, 1000**3))
+        # Match number and unit
+        match = re.match(r'^(\d+(?:\.\d+)?)([KMGT]I?B?)?$', size_str)
+
+        if match:
+            value_str, unit = match.groups()
+            value = float(value_str)
+
+            if unit and unit in multipliers.keys():
+                multiplier = multipliers[unit]
+            elif unit:
+                # Unknown unit, assume it's bytes if just a number
+                logger.debug(f"Unknown unit '{unit}', treating as bytes")
+                multiplier = 1
+            else:
+                # No unit specified, assume GB for large numbers, MB for smaller
+                multiplier = (10**9 if value < 1000 else 10**6)
+
+            try:
+                result = int(value * multiplier)
+                return max(result, 1)  # Ensure at least 1 byte
+            except (OverflowError, ValueError):
+                logger.warning(f"Size conversion overflow for '{size_str}', using default 1GB")
+                return 1073741824
+
+        # We couldn't parse the size, try to extract a number and assume GB
+        try:
+            # Look for any number in the string
+            number_match = re.search(r'(\d+(?:\.\d+)?)', size_str)
+            if number_match:
+                value = float(number_match.group(1))
+                # Assume GB for large numbers, MB for smaller
+                multiplier = 10**9 if value < 100 else 10**6
+                return int(value * multiplier)
+        except (ValueError, OverflowError):
+            pass
+
+        # Final fallback
+        logger.warning(f"Could not parse size string '{size_str}', using default 1GB")
+        return 1073741824
 
     def _error_response(self, message: str) -> str:
         """Return error XML response"""

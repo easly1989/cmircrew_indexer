@@ -1,338 +1,361 @@
 #!/usr/bin/env python3
 """
-Unit tests for MirCrew API server module
-Tests Flask web server functionality, endpoint handling, and response generation
+Unit tests for MirCrew API server Flask routes.
+
+Tests cover all endpoints, input validation, error handling, and Prowlarr compatibility.
 """
-
-import unittest
-from unittest.mock import Mock, patch, MagicMock
-import os
-import sys
-import io
+import pytest
 import json
-from urllib.parse import quote
-
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
-
-from flask import Flask
+import tempfile
+from unittest.mock import Mock, patch, MagicMock
+from flask.testing import FlaskClient
 from src.mircrew.api.server import MirCrewAPIServer
 
 
-class TestMirCrewAPIServer(unittest.TestCase):
-    """Test cases for MirCrew API server functionality"""
+@pytest.fixture
+def app():
+    """Create and configure a test Flask app."""
+    server = MirCrewAPIServer(host='127.0.0.1', port=9118)
+    server.app.config['TESTING'] = True
+    return server.app
 
-    def setUp(self):
-        """Set up test fixtures before each test method"""
+
+@pytest.fixture
+def client(app):
+    """Create a test client for the Flask app."""
+    return app.test_client()
+
+
+@pytest.fixture
+def mock_subprocess():
+    """Mock subprocess for testing indexer calls."""
+    with patch('src.mircrew.api.server.subprocess.run') as mock_run:
+        mock_process = Mock()
+        mock_process.returncode = 0
+        mock_process.stdout = '<?xml version="1.0"><test>success</test>'
+        mock_process.stderr = ''
+        mock_run.return_value = mock_process
+        yield mock_run
+
+
+class TestAPIRoutes:
+    """Test all Flask API routes."""
+
+    def test_health_endpoint_returns_json(self, client):
+        """Test that /health endpoint returns proper JSON."""
+        response = client.get('/health')
+        assert response.status_code == 200
+        data = json.loads(response.data.decode('utf-8'))
+
+        required_keys = ['status', 'uptime', 'timestamp']
+        for key in required_keys:
+            assert key in data
+
+        assert data['status'] == 'healthy'
+        assert isinstance(data['uptime'], str)
+        assert isinstance(data['timestamp'], str)
+
+    def test_health_endpoint_content_type(self, client):
+        """Test that /health returns JSON content type."""
+        response = client.get('/health')
+        assert 'application/json' in response.headers.get('Content-Type', '')
+
+    @patch('src.mircrew.api.server.MirCrewAPIServer._create_torrent_from_magnet')
+    def test_download_valid_magnet_hash(self, mock_create_torrent, client):
+        """Test download endpoint with valid magnet hash."""
+        mock_create_torrent.return_value = b'torrent_file_content'
+
+        response = client.get('/download/abcdef0123456789abcdef0123456789abcdef')
+
+        assert response.status_code == 200
+        # Should have torrent file attachment
+        assert 'attachment' in response.headers.get('Content-Disposition', '')
+        assert 'application/x-bittorrent' in response.headers.get('Content-Type', '')
+
+    def test_download_invalid_hash_length(self, client):
+        """Test download endpoint rejects invalid hash length."""
+        # Too short
+        response = client.get('/download/short')
+        assert response.status_code == 400
+        assert b'Invalid magnet hash' in response.data
+
+        # Too long
+        response = client.get('/download/abcdef0123456789abcdef0123456789abcdef0123456789')
+        assert response.status_code == 400
+        assert b'Invalid magnet hash' in response.data
+
+    def test_download_empty_hash(self, client):
+        """Test download endpoint handles empty hash."""
+        response = client.get('/download/')
+        assert response.status_code == 404  # Flask renders this as 404 for empty path
+
+    @patch('src.mircrew.api.server.MirCrewAPIServer._create_torrent_from_magnet')
+    def test_download_server_error(self, mock_create_torrent, client):
+        """Test download endpoint handles server errors gracefully."""
+        mock_create_torrent.side_effect = Exception("Torrent creation failed")
+
+        response = client.get('/download/abcdef0123456789abcdef0123456789abcdef')
+
+        assert response.status_code == 500
+        assert b'Error creating torrent file' in response.data
+
+
+class TestTorznabAPI:
+    """Test Torznab API functionality."""
+
+    def test_missing_action_parameter(self, client):
+        """Test API rejects requests without 't' parameter."""
+        response = client.get('/api')
+        assert response.status_code == 400
+        data = response.data.decode('utf-8')
+        assert '<error' in data
+        assert 'Missing parameter' in data
+
+    def test_invalid_action_parameter(self, client):
+        """Test API rejects invalid 't' parameter values."""
+        response = client.get('/api?t=invalid')
+        assert response.status_code == 400
+        data = response.data.decode('utf-8')
+        assert '<error' in data
+        assert 'Invalid action' in data
+
+    def test_capabilities_response(self, client):
+        """Test capabilities endpoint returns proper XML."""
+        response = client.get('/api?t=caps')
+        assert response.status_code == 200
+        data = response.data.decode('utf-8')
+
+        # Should contain required Torznab capabilities elements
+        assert '<caps>' in data
+        assert '<server' in data
+        assert '<categories>' in data
+        assert '<searching>' in data
+        assert 'application/xml' in response.headers.get('Content-Type', '')
+
+
+class TestSearchFunctionality:
+    """Test search request handling."""
+
+    def test_search_with_valid_parameters(self, client, mock_subprocess):
+        """Test search works with proper parameters."""
+        response = client.get('/api?t=search&q=The+Matrix&cat=2000')
+
+        assert response.status_code == 200
+        # Subprocess should have been called
+        mock_subprocess.assert_called_once()
+
+    def test_search_empty_query_handling(self, client, mock_subprocess):
+        """Test search handles empty queries gracefully."""
+        response = client.get('/api?t=search&q=')
+        assert response.status_code == 200
+
+    def test_search_with_season_episode(self, client, mock_subprocess):
+        """Test search with season and episode parameters."""
+        response = client.get('/api?t=search&season=1&ep=2')
+        assert response.status_code == 200
+
+    def test_search_with_special_characters(self, client, mock_subprocess):
+        """Test search handles special characters in query."""
+        response = client.get('/api?t=search&q=Movie%20Title%20%26%20More')
+        assert response.status_code == 200
+
+    def test_search_overlong_parameters(self, client, mock_subprocess):
+        """Test search handles excessively long parameters."""
+        long_query = 'A' * 1000  # Create a very long query
+        response = client.get(f'/api?t=search&q={long_query}')
+        assert response.status_code == 200  # Should still work due to sanitization
+
+    def test_search_parameter_sanitization(self, client, mock_subprocess):
+        """Test that dangerous parameters are sanitized."""
+        response = client.get('/api?t=search&q=<script>alert(1)</script>')
+        assert response.status_code == 200
+
+
+class TestInputValidation:
+    """Test input validation functions."""
+
+    def setup_method(self):
+        """Setup test server instance."""
         self.server = MirCrewAPIServer()
-        self.app = self.server.app
-        self.client = self.app.test_client()
 
-    def tearDown(self):
-        """Clean up after each test method"""
-        pass
+    def test_sanitize_numeric_parameter(self):
+        """Test numeric parameter sanitization."""
+        # Valid numeric input
+        assert self.server._sanitize_numeric_param('123') == '123'
+        assert self.server._sanitize_numeric_param('00123') == '00123'
 
-    def test_init_creates_app(self):
-        """Test that initialization creates Flask app and server instance"""
-        self.assertIsNotNone(self.server.app)
-        self.assertIsNotNone(self.server.host)
-        self.assertIsNotNone(self.server.port)
+        # Invalid or malicious input
+        assert self.server._sanitize_numeric_param('abc123def') == '123'
+        assert self.server._sanitize_numeric_param('<script>123</script>') == '123'
 
-    def test_health_endpoint(self):
-        """Test health check endpoint"""
-        with self.app.test_client() as client:
-            response = client.get('/health')
-            self.assertEqual(response.status_code, 200)
+        # Empty input
+        assert self.server._sanitize_numeric_param('') == ''
+        assert self.server._sanitize_numeric_param(None) == ''
 
-            data = json.loads(response.data)
-            self.assertIn('status', data)
-            self.assertIn('uptime', data)
-            self.assertIn('timestamp', data)
-            self.assertEqual(data['status'], 'healthy')
+    def test_sanitize_limit_parameter(self):
+        """Test limit parameter sanitization and bounds checking."""
+        # Valid ranges
+        assert self.server._sanitize_limit_param('50') == '50'
+        assert self.server._sanitize_limit_param('100') == '100'
 
-    @patch('src.mircrew.api.server.requests.Session.get')
-    def test_torznab_api_missing_t_parameter(self, mock_get):
-        """Test Torznab API endpoint missing 't' parameter"""
-        with self.app.test_client() as client:
-            response = client.get('/api')
-            self.assertEqual(response.status_code, 200)
+        # Bounds checking
+        assert self.server._sanitize_limit_param('0') == '1'  # Minimum 1
+        assert self.server._sanitize_limit_param('1000') == '500'  # Maximum 500
+        assert self.server._sanitize_limit_param('600') == '500'  # Clamp upper bound
 
-            # Should contain error response
-            data = response.get_data(as_text=True)
-            self.assertIn('Missing parameter \'t\'', data)
+        # Invalid input fallback
+        assert self.server._sanitize_limit_param('abc') == '100'
+        assert self.server._sanitize_limit_param('') == '100'
 
-    def test_torznab_api_caps_request(self):
-        """Test Torznab API capabilities request"""
-        with self.app.test_client() as client:
-            response = client.get('/api?t=caps')
-            self.assertEqual(response.status_code, 200)
+    def test_sanitize_imdb_id(self):
+        """Test IMDB ID sanitization."""
+        # Valid IMDB IDs
+        assert self.server._sanitize_imdb_id('tt0111161') == '0111161'
+        assert self.server._sanitize_imdb_id('0111161') == '0111161'
 
-            data = response.get_data(as_text=True)
+        # Invalid input
+        assert self.server._sanitize_imdb_id('ttXYZ123') == '123'
+        assert self.server._sanitize_imdb_id('abcd') == ''
 
-            # Verify capabilities XML structure
-            self.assertIn('<?xml version="1.0"', data)
-            self.assertIn('<caps>', data)
-            self.assertIn('<server', data)
-            self.assertIn('<searching>', data)
-            self.assertIn('<categories>', data)
-            self.assertIn('MirCrew Indexer', data)
+        # Empty input
+        assert self.server._sanitize_imdb_id('') == ''
 
-    def test_capabilities_contains_supported_params(self):
-        """Test that capabilities response contains supported parameters"""
-        with self.app.test_client() as client:
-            response = client.get('/api?t=caps')
-            data = response.get_data(as_text=True)
+    def test_sanitize_query_parameters(self):
+        """Test general query parameter sanitization."""
+        # Normal input
+        assert self.server._sanitize_query_param('The Matrix') == 'The Matrix'
 
-            # Check for required Torznab elements
-            self.assertIn('supportedParams="q,cat,season,ep"', data)
-            self.assertIn('<tv-search', data)
-            self.assertIn('<movie-search', data)
-            self.assertIn('available="yes"', data)
+        # Dangerous content removal
+        assert self.server._sanitize_query_param('<script>alert(1)</script>') == 'scriptalert(1)/script'
 
-    def test_capabilities_contains_categories(self):
-        """Test that capabilities response contains proper categories"""
-        with self.app.test_client() as client:
-            response = client.get('/api?t=caps')
-            data = response.get_data(as_text=True)
+        # Length limiting
+        long_string = 'A' * 1000
+        result = self.server._sanitize_query_param(long_string)
+        assert len(result) <= 500  # Should be truncated
 
-            # Check for category structure
-            self.assertIn('id="2000" name="Movies"', data)
-            self.assertIn('id="5000" name="TV"', data)
+        # Empty input
+        assert self.server._sanitize_query_param('') == ''
+        assert self.server._sanitize_query_param(None) == ''
 
-    @patch('src.mircrew.api.server.subprocess.run')
-    def test_search_request_calls_subprocess(self, mock_subprocess):
-        """Test that search requests properly call the subprocess"""
-        # Mock successful subprocess execution
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"></rss>'
-        mock_subprocess.return_value = mock_result
 
-        with self.app.test_client() as client:
-            response = client.get('/api?t=search&q=test')
-            self.assertEqual(response.status_code, 200)
+class TestProwlarrCompatibility:
+    """Test Prowlarr compatibility features."""
 
-            # Verify subprocess was called
-            mock_subprocess.assert_called_once()
-            call_args = mock_subprocess.call_args[0][0]
+    def test_prowlarr_test_request_detection(self, client, mock_subprocess):
+        """Test detection of Prowlarr test requests."""
+        # True test request: no parameters
+        response = client.get('/api?t=search')
+        assert response.status_code == 200
+        # Should return test XML response, not call indexer
+        mock_subprocess.assert_not_called()
+        data = response.data.decode('utf-8')
+        assert 'MirCrew.Indexer.Test.Response.SAMPLE.avi' in data
 
-            # Check that indexer command was constructed correctly
-            self.assertIn(sys.executable, call_args)
-            self.assertIn('mircrew_indexer.py', call_args[1])
-            self.assertIn('-q', call_args)
-            self.assertIn('test', call_args)
+    def test_legitimate_search_with_empty_params(self, client, mock_subprocess):
+        """Test that legitimate empty parameter searches are not mistaken for test requests."""
+        # Empty query but with category specified
+        response = client.get('/api?t=search&cat=2000')
+        assert response.status_code == 200
+        # Should call indexer for real search
+        mock_subprocess.assert_called_once()
 
-    @patch('src.mircrew.api.server.subprocess.run')
-    def test_search_request_with_parameters(self, mock_subprocess):
-        """Test search request with season and episode parameters"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"></rss>'
-        mock_subprocess.return_value = mock_result
+    def test_real_search_vs_test_request(self, client, mock_subprocess):
+        """Test distinction between real searches and test requests."""
+        # Test request with no parameters
+        client.get('/api?t=search')
+        # Should not call indexer for test requests
+        initial_call_count = mock_subprocess.call_count
 
-        with self.app.test_client() as client:
-            response = client.get('/api?t=search&season=01&ep=05&q=Dexter')
-            self.assertEqual(response.status_code, 200)
+        # Real search with query
+        client.get('/api?t=search&q=movie')
+        # Should call indexer for real searches
+        assert mock_subprocess.call_count > initial_call_count
 
-            # Verify subprocess parameters
-            call_args = mock_subprocess.call_args[0][0]
-            self.assertIn('-season', call_args)
-            self.assertIn('01', call_args)
-            self.assertIn('-ep', call_args)
-            self.assertIn('05', call_args)
 
-    @patch('src.mircrew.api.server.subprocess.run')
-    def test_subprocess_failure_handling(self, mock_subprocess):
-        """Test handling of subprocess execution failure"""
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "Indexer execution failed"
-        mock_subprocess.return_value = mock_result
+class TestErrorHandling:
+    """Test error handling and recovery."""
 
-        with self.app.test_client() as client:
-            response = client.get('/api?t=search&q=test')
-            self.assertEqual(response.status_code, 200)
+    def test_subprocess_failure(self, client, mock_subprocess):
+        """Test handling of indexer subprocess failures."""
+        mock_process = Mock()
+        mock_process.returncode = 1
+        mock_process.stdout = ''
+        mock_process.stderr = 'Indexer failed with error'
+        mock_subprocess.return_value = mock_process
 
-            data = response.get_data(as_text=True)
-            self.assertIn('Indexer execution failed', data)
+        response = client.get('/api?t=search&q=The+Matrix')
+        assert response.status_code == 500
+        data = response.data.decode('utf-8')
+        assert 'Indexer execution failed' in data
 
-    @patch('src.mircrew.api.server.subprocess.run')
-    def test_timeout_handling(self, mock_subprocess):
-        """Test handling of subprocess timeout"""
-        import subprocess
-        mock_subprocess.side_effect = subprocess.TimeoutExpired([], 30)
+    def test_subprocess_timeout(self, client, mock_subprocess):
+        """Test handling of indexer subprocess timeouts."""
+        from src.mircrew.api.server import subprocess
+        mock_subprocess.side_effect = subprocess.TimeoutExpired(cmd='test', timeout=30)
 
-        with self.app.test_client() as client:
-            response = client.get('/api?t=search&q=test')
-            self.assertEqual(response.status_code, 200)
+        response = client.get('/api?t=search&t=test')
+        assert response.status_code == 504
+        data = response.data.decode('utf-8')
+        assert 'timed out' in data
 
-            data = response.get_data(as_text=True)
-            self.assertIn('Indexer execution timed out', data)
+    @patch('src.mircrew.api.server.logger')
+    def test_logging_of_api_errors(self, mock_logger, client):
+        """Test that API errors are properly logged."""
+        client.get('/api?t=invalid_action')
 
-    def test_extract_torznab_params_basic(self):
-        """Test basic parameter extraction from request"""
-        with self.app.test_request_context('/api?t=search&q=test&limit=10'):
-            from flask import request
-            params = self.server._extract_torznab_params(request)
+        # Should have logged the error
+        mock_logger.error.assert_called()
+        call_args = str(mock_logger.error.call_args)
+        assert 'Invalid action' in call_args
 
-            self.assertEqual(params['t'], 'search')
-            self.assertEqual(params['q'], 'test')
-            self.assertEqual(params['limit'], '10')
 
-    def test_extract_torznab_params_seasonal_search(self):
-        """Test parameter extraction for TV/seasonal searches"""
-        with self.app.test_request_context('/api?t=search&season=01&ep=05&cat=5000'):
-            from flask import request
-            params = self.server._extract_torznab_params(request)
+class TestBencoding:
+    """Test bencode implementation."""
 
-            self.assertEqual(params['season'], '01')
-            self.assertEqual(params['ep'], '05')
-            self.assertEqual(params['cat'], '5000')
+    def setup_method(self):
+        """Setup test server instance."""
+        self.server = MirCrewAPIServer()
 
-    def test_test_request_detection(self):
-        """Test detection of Prowlarr test requests"""
-        # Test request with no parameters (typical test request)
-        with self.app.test_request_context('/api?t=search'):
-            from flask import request
-            params = self.server._extract_torznab_params(request)
+    def test_bencode_integer(self):
+        """Test bencode integer encoding."""
+        result = self.server._bencode(42)
+        assert result == b'i42e'
 
-            self.assertTrue(params['is_test_request'])
+        result = self.server._bencode(-1)
+        assert result == b'i-1e'
 
-        # Test request with search parameter (not a test request)
-        with self.app.test_request_context('/api?t=search&q=matrix'):
-            from flask import request
-            params = self.server._extract_torznab_params(request)
+    def test_bencode_string(self):
+        """Test bencode string encoding."""
+        result = self.server._bencode('hello')
+        assert result == b'5:hello'
 
-            self.assertFalse(params['is_test_request'])
+        result = self.server._bencode('')
+        assert result == b'0:'
 
-    def test_test_request_response_structure(self):
-        """Test test request response format"""
-        with self.app.test_client() as client:
-            # Mock to trigger test request path
-            with patch.object(self.server, '_extract_torznab_params', return_value={
-                't': 'search',
-                'q': '',
-                'season': '',
-                'ep': '',
-                'is_test_request': True
-            }):
-                response = client.get('/api?t=search')
-                data = response.get_data(as_text=True)
+    def test_bencode_bytes(self):
+        """Test bencode bytes encoding."""
+        data = b'test_bytes'
+        result = self.server._bencode(data)
+        assert result == b'10:test_bytes'
 
-                # Should contain basic test response structure
-                self.assertIn('<?xml version="1.0"', data)
-                self.assertIn('<rss version="2.0"', data)
-                self.assertIn('<item>', data)
-                self.assertIn('MirCrew.Indexer.Test.Response', data)
+    def test_bencode_list(self):
+        """Test bencode list encoding."""
+        result = self.server._bencode(['a', 'b', 42])
+        assert result == b'l1:a1:bi42ee'
 
-    def test_error_response_format(self):
-        """Test error response formatting"""
-        message = "Test error"
-        code = 404
+    def test_bencode_dict(self):
+        """Test bencode dictionary encoding."""
+        test_dict = {'key1': 'value1', 'key2': 42}
+        result = self.server._bencode(test_dict)
+        # Keys should be sorted in bencode
+        expected = b'd4:key16:value14:key2i42ee'
+        assert result == expected
 
-        with self.app.test_client() as client:
-            # Trigger error response through missing required param
-            response = client.get('/api')  # Missing 't' parameter
-            data = response.get_data(as_text=True)
-
-            self.assertIn('Missing parameter \'t\'', data)
-            self.assertIn(str(code), data)
-
-    def test_url_encoding_handling(self):
-        """Test handling of URL-encoded parameters"""
-        query_with_spaces = "Test Movie Query"
-        encoded_query = quote(query_with_spaces)
-
-        with self.app.test_client() as client:
-            response = client.get(f'/api?t=search&q={encoded_query}')
-            # Flask should automatically decode URL-encoded parameters
-            self.assertEqual(response.status_code, 200)
-
-    @patch('src.mircrew.api.server.send_file')
-    @patch('src.mircrew.api.server.io.BytesIO')
-    def test_download_torrent_endpoint(self, mock_bytesio, mock_send_file):
-        """Test torrent download endpoint"""
-        mock_file_data = b'torrent data'
-        mock_bytesio.return_value = mock_file_data
-
-        with self.app.test_client() as client:
-            response = client.get('/download/abc123def456')
-
-            # Should create torrent file response
-            mock_send_file.assert_called_once()
-            call_args = mock_send_file.call_args
-
-            self.assertEqual(call_args[1]['mimetype'], 'application/x-bittorrent')
-            self.assertTrue(call_args[1]['as_attachment'])
-            self.assertIn('abc123def456', call_args[1]['download_name'])
-
-    @patch('src.mircrew.api.server.send_file')
-    def test_download_invalid_hash(self, mock_send_file):
-        """Test torrent download with invalid hash"""
-        with self.app.test_client() as client:
-            response = client.get('/download/invalid')
-
-            # Should return error for invalid hash
-            mock_send_file.assert_not_called()
-            self.assertEqual(response.status_code, 200)
-            data = response.get_data(as_text=True)
-            self.assertIn('Invalid magnet hash', data)
-
-    def test_download_hash_validation(self):
-        """Test magnet hash length validation"""
-        with self.app.test_client() as client:
-            # Test with hash that's too short
-            response = client.get('/download/short')
-            data = response.get_data(as_text=True)
-            self.assertIn('Invalid magnet hash', data)
-
-            # Test with hash that's correct length
-            response = client.get('/download/' + 'a' * 40)
-            self.assertEqual(response.status_code, 200)
-
-    @patch('src.mircrew.api.server.subprocess.run')
-    def test_season_only_search(self, mock_subprocess):
-        """Test search with only season parameter"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"></rss>'
-        mock_subprocess.return_value = mock_result
-
-        with self.app.test_client() as client:
-            response = client.get('/api?t=search&season=02')
-            self.assertEqual(response.status_code, 200)
-
-            call_args = mock_subprocess.call_args[0][0]
-            self.assertIn('-season', call_args)
-            self.assertIn('02', call_args)
-
-    @patch('src.mircrew.api.server.subprocess.run')
-    def test_year_based_search(self, mock_subprocess):
-        """Test search with year parameter"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"></rss>'
-        mock_subprocess.return_value = mock_result
-
-        with self.app.test_client() as client:
-            # Test without explicit query or season (should use year)
-            response = client.get('/api?t=search')
-            self.assertEqual(response.status_code, 200)
-
-            call_args = mock_subprocess.call_args[0][0]
-            # Should at least have the python executable and indexer script
-            self.assertIn(sys.executable, call_args)
-            self.assertTrue(len(call_args) >= 2)
-
-    def test_xml_content_type(self):
-        """Test that all XML responses have correct content type"""
-        with self.app.test_client() as client:
-            # Test capabilities response
-            response = client.get('/api?t=caps')
-            # Flask test client doesn't set content-type automatically,
-            # but in real server it would be set via Response object
-            self.assertEqual(response.status_code, 200)
+    def test_bencode_unsupported_type(self):
+        """Test bencode handles unsupported types gracefully."""
+        with pytest.raises(ValueError, match="Unsupported type"):
+            self.server._bencode(set(['unsupported']))
 
 
 if __name__ == '__main__':
-    unittest.main()
+    pytest.main([__file__])

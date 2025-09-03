@@ -103,48 +103,122 @@ class MirCrewAPIServer:
             }
 
     def _create_torrent_from_magnet(self, magnet_hash: str) -> bytes:
-        """Create a .torrent file from magnet link hash"""
+        """
+        Create a .torrent file from magnet link hash with proper structure.
+
+        Args:
+            magnet_hash: 40-character bittorrent hash
+
+        Returns:
+            bytes: Properly bencoded .torrent file content
+
+        Raises:
+            ValueError: If magnet hash is invalid
+            Exception: If torrent creation fails
+        """
         try:
-            # Create basic torrent structure
-            # This is a simplified approach - in production, you'd want proper torrent creation
+            # Validate magnet hash
+            if not magnet_hash or len(magnet_hash) != 40:
+                raise ValueError(f"Invalid magnet hash length: {len(magnet_hash) if magnet_hash else 'None'}")
+
+            if not magnet_hash.isalnum():
+                raise ValueError("Magnet hash contains invalid characters")
+
+            # Create proper torrent structure that matches typical .torrent format
             torrent_data = {
-                'info': {
-                    'name': f'mircrew-{magnet_hash}',
-                    'piece length': 1048576,  # 1MB
-                    'length': 1073741824,  # 1GB (dummy size)
-                    'pieces': b'\x00' * 20,  # Dummy piece hash
-                },
-                'announce': 'http://127.0.0.1:6969/announce',  # Dummy tracker
+                'announce': 'http://127.0.0.1:6969/announce',  # Local tracker fallback
+                'announce-list': [
+                    ['http://127.0.0.1:6969/announce'],
+                    ['udp://tracker.openbittorrent.com:80'],
+                    ['udp://tracker.publicbt.com:80']
+                ],
                 'creation date': int(datetime.now().timestamp()),
-                'created by': 'MirCrew Indexer API',
-                'info hash': magnet_hash
+                'created by': 'MirCrew Indexer API v1.0.0',
+                'encoding': 'UTF-8',
+                'info': {
+                    'name': f'MirCrew.Indexer.Release.{magnet_hash}',
+                    'length': 1073741824,  # 1GB default size
+                    'piece length': 262144,  # 256KB pieces (common size)
+                    'pieces': b'\x00' * 20 * 4096,  # Dummy piece hashes (4096 pieces for ~1GB)
+                    'private': 0,  # Public torrent
+                    'files': None,  # Single file torrent
+                    'source': 'MirCrew.Indexer'
+                }
             }
 
-            # Simple bencode implementation
+            # Enhanced bencode with proper error handling
             return self._bencode(torrent_data)
 
+        except ValueError as e:
+            logger.error(f"Torrent creation validation error: {str(e)}")
+            raise
         except Exception as e:
-            logger.error(f"Error creating torrent: {str(e)}")
+            logger.error(f"Unexpected error creating torrent from hash {magnet_hash[:10]}...: {str(e)}")
             raise
 
     def _bencode(self, data) -> bytes:
-        """Simple bencode implementation"""
+        """
+        Robust bencode implementation for torrent files.
+
+        Args:
+            data: Data to bencode (int, str, bytes, list, dict, None)
+
+        Returns:
+            bytes: Bencoded data
+
+        Raises:
+            ValueError: If data type is unsupported or invalid
+            TypeError: If data structure is malformed
+        """
         if isinstance(data, int):
+            # Handle negative numbers and zero
+            if data < 0:
+                return f'i{data}e'.encode()
             return f'i{data}e'.encode()
+
         elif isinstance(data, str):
-            return f'{len(data)}:{data}'.encode()
+            # Ensure UTF-8 encoding for strings
+            encoded_str = data.encode('utf-8')
+            return f'{len(encoded_str)}:'.encode() + encoded_str
+
         elif isinstance(data, bytes):
             return f'{len(data)}:'.encode() + data
+
         elif isinstance(data, list):
-            return b'l' + b''.join(self._bencode(item) for item in data) + b'e'
+            # Validate list contents
+            encoded_items = []
+            for i, item in enumerate(data):
+                try:
+                    encoded_items.append(self._bencode(item))
+                except (ValueError, TypeError) as e:
+                    raise TypeError(f"Invalid item at index {i} in list: {e}")
+
+            return b'l' + b''.join(encoded_items) + b'e'
+
         elif isinstance(data, dict):
-            result = b'd'
-            for key, value in sorted(data.items()):
-                result += self._bencode(key) + self._bencode(value)
-            result += b'e'
-            return result
+            # Validate dict structure and sort keys as required by bencode spec
+            if not isinstance(data, dict):
+                raise TypeError("Dictionary expected")
+
+            # Sort keys for consistent bencoding
+            sorted_items = []
+            for key in sorted(data.keys()):
+                value = data[key]
+                try:
+                    sorted_items.append(self._bencode(key))
+                    if value is not None:  # Allow None values to be skipped
+                        sorted_items.append(self._bencode(value))
+                except (ValueError, TypeError) as e:
+                    raise TypeError(f"Invalid value for key '{key}': {e}")
+
+            return b'd' + b''.join(sorted_items) + b'e'
+
+        elif data is None:
+            # Special case: encode None as empty string
+            return b'0:'
+
         else:
-            raise ValueError(f"Unsupported type: {type(data)}")
+            raise ValueError(f"Unsupported data type: {type(data)} ({data!r})")
 
     def _extract_magnet_hash(self, magnet_url: str) -> str:
         """Extract 40-character btih hash from magnet URL"""
@@ -162,42 +236,90 @@ class MirCrewAPIServer:
             return "TEST1234567890"  # Fallback
 
     def _extract_torznab_params(self, request) -> Dict[str, Any]:
-        """Extract and validate Torznab parameters from request"""
+        """Extract and validate Torznab parameters from request with enhanced input sanitization"""
         params = {}
 
-        # Required parameters
-        params['t'] = request.args.get('t')  # action (search, caps)
+        # Required parameters with validation
+        t_param = request.args.get('t', '').strip().lower()
+        if not t_param:
+            raise ValueError("Missing required parameter 't'")
+        if t_param not in ['search', 'caps']:
+            raise ValueError(f"Invalid action 't={t_param}', supported: search, caps")
+        params['t'] = t_param
 
-        # Search parameters
-        params['q'] = request.args.get('q', '')  # query string
-        params['cat'] = request.args.get('cat', '')  # category
-        params['season'] = request.args.get('season', '')  # season number
-        params['ep'] = request.args.get('ep', '')  # episode number
-        params['limit'] = request.args.get('limit', '100')  # result limit
+        # Search parameters with sanitization
+        params['q'] = self._sanitize_query_param(request.args.get('q', ''))
+        params['cat'] = self._sanitize_query_param(request.args.get('cat', ''))
+        params['season'] = self._sanitize_numeric_param(request.args.get('season', ''))
+        params['ep'] = self._sanitize_numeric_param(request.args.get('ep', ''))
+        params['limit'] = self._sanitize_limit_param(request.args.get('limit', '100'))
 
         # Additional Torznab parameters that Prowlarr might send
-        params['extended'] = request.args.get('extended', '')  # extended info
-        params['offset'] = request.args.get('offset', '0')  # pagination offset
-        params['imdbid'] = request.args.get('imdbid', '')  # IMDB ID
-        params['tvdbid'] = request.args.get('tvdbid', '')  # TVDB ID
+        params['extended'] = self._sanitize_query_param(request.args.get('extended', ''))
+        params['offset'] = self._sanitize_numeric_param(request.args.get('offset', '0'))
+        params['imdbid'] = self._sanitize_imdb_id(request.args.get('imdbid', ''))
+        params['tvdbid'] = self._sanitize_numeric_param(request.args.get('tvdbid', ''))
 
-        # Detect Prowlarr test requests - only when ALL parameters are None or empty AND no category filtering
-        # Be more conservative to avoid treating legitimate searches as test requests
-        all_empty_or_none = (
-            params.get('q') in ['', None] and
-            params.get('season') in ['', None] and
-            params.get('ep') in ['', None] and
-            params.get('imdbid') in ['', None] and
-            params.get('tvdbid') in ['', None]
+        # Detect Prowlarr test requests - enhanced logic
+        all_search_params_empty = (
+            not params.get('q') and
+            not params.get('season') and
+            not params.get('ep') and
+            not params.get('imdbid') and
+            not params.get('tvdbid') and
+            not params.get('cat') and
+            not params.get('extended') and
+            params.get('offset', '0') == '0'
         )
-        # Only treat as test request if NO category is specified AND all search params are empty/None
+
         params['is_test_request'] = (
             params['t'] == 'search' and
-            all_empty_or_none and
-            not params.get('cat')  # If category is specified, it's not a test request
+            all_search_params_empty
         )
 
+        logger.debug(f"Extracted Torznab params: t={params['t']}, is_test={params['is_test_request']}")
         return params
+
+    def _sanitize_query_param(self, value: Optional[str]) -> str:
+        """Sanitize query string parameters"""
+        if not value:
+            return ''
+        # Remove dangerous characters but allow search-specific ones
+        sanitized = str(value).strip()[:500]  # Limit length to prevent abuse
+        # Remove script tags and other potentially dangerous content
+        sanitized = sanitized.replace('<', '').replace('>', '').replace('&', '&')
+        return sanitized
+
+    def _sanitize_numeric_param(self, value: Optional[str]) -> str:
+        """Sanitize numeric parameters"""
+        if not value:
+            return ''
+        # Allow only digits for numeric parameters
+        digits_only = ''.join(filter(str.isdigit, str(value)))
+        return digits_only[:10]  # Reasonable limit for season/episode numbers
+
+    def _sanitize_limit_param(self, value: Optional[str]) -> str:
+        """Sanitize limit parameter with reasonable bounds"""
+        if not value:
+            return '100'
+        try:
+            limit = int(value)
+            # Clamp between 1 and 500 (reasonable for torrent indexing)
+            return str(max(1, min(500, limit)))
+        except (ValueError, TypeError):
+            return '100'
+
+    def _sanitize_imdb_id(self, value: Optional[str]) -> str:
+        """Sanitize IMDB ID format (ttXXXXXXX or XXXXXXXX)"""
+        if not value:
+            return ''
+        value = str(value).strip()
+        # Remove 'tt' prefix if present, keep only numeric
+        if value.startswith('tt'):
+            value = value[2:]
+        # Keep only numeric characters and limit length
+        numeric_only = ''.join(filter(str.isdigit, value))
+        return numeric_only[:10] if numeric_only else ''
 
     def _capabilities_response(self) -> Response:
         """Return Torznab capabilities XML"""

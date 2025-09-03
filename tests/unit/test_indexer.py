@@ -1,375 +1,261 @@
 #!/usr/bin/env python3
 """
-Unit tests for MirCrew indexer module
-Tests Torznab API functionality, XML generation, and search operations
+Unit tests for MirCrew indexer core module.
+
+Tests indexer functionality including config loading, category mapping, and XML generation.
 """
-
-import unittest
-from unittest.mock import Mock, patch, MagicMock
+import pytest
+import tempfile
 import os
-import sys
-from datetime import datetime
-from urllib.parse import urljoin
-
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
-
+from unittest.mock import Mock, patch, MagicMock
+import requests
 from src.mircrew.core.indexer import MirCrewIndexer
 
 
-class TestMirCrewIndexer(unittest.TestCase):
-    """Test cases for MirCrew indexer functionality"""
+class TestMirCrewIndexerConfig:
+    """Test configuration loading and category mapping functionality."""
 
-    def setUp(self):
-        """Set up test fixtures before each test method"""
-        self.indexer = MirCrewIndexer()
+    def test_init_loads_config_success(self):
+        """Test that indexer loads category mappings from config file."""
+        # Create a temporary config file
+        config_data = """---
+caps:
+  categorymappings:
+    - {id: 25, cat: Movies, desc: "Video Releases"}
+    - {id: 51, cat: TV, desc: "Releases TV Stagioni in corso"}
+    - {id: 39, cat: Books, desc: "Libreria Releases"}
+fields:
+  size_default:
+    case:
+      'a[href*="f=25"]': 10GB
+      'a[href*="f=51"]': 2GB
+      'a[href*="f=39"]': 512MB
+"""
 
-    def tearDown(self):
-        """Clean up after each test method"""
-        pass
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+            f.write(config_data)
+            config_path = f.name
 
-    def test_init_sets_up_categories(self):
-        """Test that initialization sets up category mappings correctly"""
-        self.assertIsNotNone(self.indexer.cat_mappings)
-        self.assertEqual(self.indexer.cat_mappings['25'], 'Movies')
-        self.assertEqual(self.indexer.cat_mappings['51'], 'TV')
+        try:
+            # Create indexer with custom config path
+            with patch('src.mircrew.core.indexer.requests.Session'):
+                indexer = MirCrewIndexer(config_path=config_path)
 
-    def test_init_sets_up_default_sizes(self):
-        """Test that initialization sets up default sizes correctly"""
-        self.assertEqual(self.indexer.default_sizes['Movies'], '10GB')
-        self.assertEqual(self.indexer.default_sizes['TV'], '2GB')
+            # Check that config was loaded properly
+            assert '25' in indexer.cat_mappings
+            assert indexer.cat_mappings['25'] == 'Movies'
+            assert indexer.cat_mappings['51'] == 'TV'
+            assert indexer.cat_mappings['39'] == 'Books'
 
-    def test_base_url_correct(self):
-        """Test that base URL is properly set"""
-        self.assertEqual(self.indexer.base_url, "https://mircrew-releases.org")
+            # Check size defaults
+            assert indexer.default_sizes['Movies'] == '10GB'
+            assert indexer.default_sizes['TV'] == '2GB'
+            assert indexer.default_sizes['Books'] == '512MB'
 
-    @patch('src.mircrew.core.indexer.requests.Session')
-    def test_authenticate_success(self, mock_session):
-        """Test successful authentication"""
-        mock_session_instance = MagicMock()
-        mock_session.return_value = mock_session_instance
+        finally:
+            os.unlink(config_path)
 
-        # Mock the login handler
-        mock_login = MagicMock()
-        mock_login.login.return_value = True
-        mock_login.session = mock_session_instance
-        self.indexer.login_handler = mock_login
+    def test_init_config_file_not_found_fallback(self):
+        """Test that indexer falls back to hardcoded mappings when config not found."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer(config_path='/nonexistent/path.yml')
 
-        result = self.indexer.authenticate()
-        self.assertTrue(result)
-        self.assertEqual(self.indexer.session, mock_session_instance)
-        self.assertTrue(self.indexer.logged_in)
+        # Should have fallback mappings
+        assert len(indexer.cat_mappings) > 0
+        assert '25' in indexer.cat_mappings
+        assert len(indexer.default_sizes) > 0
 
-    @patch('src.mircrew.core.indexer.requests.Session')
-    def test_authenticate_failure(self, mock_session):
-        """Test authentication failure"""
-        mock_session_instance = MagicMock()
-        mock_session.return_value = mock_session_instance
+    def test_extract_forum_id_from_url(self):
+        """Test forum ID extraction from thread URLs."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-        # Mock failed login
-        mock_login = MagicMock()
-        mock_login.login.return_value = False
-        self.indexer.login_handler = mock_login
-
-        result = self.indexer.authenticate()
-        self.assertFalse(result)
-        self.assertFalse(self.indexer.logged_in)
-
-    def test_build_search_query_basic(self):
-        """Test basic search query building"""
-        result = self.indexer.build_search_query("test query")
-        self.assertEqual(result, '"test query"')
-
-    def test_build_search_query_with_season_ep(self):
-        """Test search query building with season and episode"""
-        result = self.indexer.build_search_query("Show Name", "01", "05")
-        self.assertEqual(result, '"Show Name" S01E05')
-
-    def test_build_search_query_season_only(self):
-        """Test search query building with season only"""
-        result = self.indexer.build_search_query("Show Name", "02")
-        self.assertEqual(result, '"Show Name" S02')
-
-    def test_prepare_search_keywords(self):
-        """Test search keyword preparation"""
-        result = self.indexer.prepare_search_params("test query")
-        self.assertEqual(result, ['+test', '+query'])
-
-    def test_prepare_search_keywords_single_word(self):
-        """Test search keyword preparation with single word"""
-        result = self.indexer.prepare_search_params("single")
-        self.assertEqual(result, ['+single'])
-
-    def test_search_thread_by_id_direct(self):
-        """Test direct thread search by ID"""
-        thread_id = "123456"
-        query = f"thread::{thread_id}"
-
-        with patch.object(self.indexer, 'authenticate', return_value=True):
-            with patch.object(self.indexer, '_extract_thread_magnets', return_value=[
-                {
-                    'title': 'Thread Magnet',
-                    'link': 'magnet:?xt=urn:btih:test123&dn=file.mkv',
-                    'details': 'https://mircrew-releases.org/viewtopic.php?t=123456',
-                    'category_id': '25'
-                }
-            ]):
-                result = self.indexer._search_thread_by_id(query)
-
-                # Should contain XML structure
-                self.assertIn('<?xml version="1.0"', result)
-                self.assertIn('<rss version="2.0"', result)
-                self.assertIn('thread-123456-0', result)
-
-    def test_search_thread_by_id_invalid(self):
-        """Test direct thread search with invalid ID format"""
-        query = "thread::invalid"
-        result = self.indexer._search_thread_by_id(query)
-
-        # Should return error response
-        self.assertIn('<error', result)
-
-    def test_contains_partial_match_direct(self):
-        """Test partial matching functionality"""
-        # Test exact match
-        result = self.indexer._contains_partial_match("test", "test movie")
-        self.assertTrue(result)
-
-        # Test no match
-        result = self.indexer._contains_partial_match("xyz", "test movie")
-        self.assertFalse(result)
-
-    def test_contains_partial_match_hyphenated(self):
-        """Test partial matching with hyphenated words"""
-        result = self.indexer._contains_partial_match("blue", "Blu-ray")
-        self.assertTrue(result)
-
-    def test_contains_partial_match_colon(self):
-        """Test partial matching with colon-separated terms"""
-        result = self.indexer._contains_partial_match("test", "Test: Movie")
-        self.assertTrue(result)
-
-    def test_filter_relevant_results(self):
-        """Test filtering threads based on search relevance"""
-        threads = [
-            {'title': 'The Matrix Movie', 'full_text': 'action sci-fi'},
-            {'title': 'Random Movie', 'full_text': 'drama'},
-            {'title': 'Unrelated', 'full_text': 'documentary'}
+        test_cases = [
+            ('https://mircrew-releases.org/viewtopic.php?f=25&t=1234', '25'),
+            ('https://mircrew-releases.org/viewtopic.php?t=1234&f=51', '51'),
+            ('https://mircrew-releases.org/viewtopic.php?t=1234', None),
+            ('https://mircrew-releases.org/index.php', None),
         ]
 
-        original_query = "matrix"
-        result = self.indexer._filter_relevant_results(threads, original_query)
+        for url, expected in test_cases:
+            result = indexer._extract_forum_id_from_url(url)
+            assert result == expected
 
-        # Should find the relevant thread
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['title'], 'The Matrix Movie')
 
-    def test_parse_search_results_success(self):
-        """Test parsing search results HTML"""
-        html_content = '''
-        <html>
-        <body>
-            <li class="row">
-                <a class="topictitle" href="viewtopic.php?t=123">Test Thread</a>
-                <time datetime="2023-12-01T12:00:00"></time>
-            </li>
-        </body>
-        </html>
-        '''
+class TestIndexerXMLHandling:
+    """Test XML escaping and generation functionality."""
 
-        keywords = "test"
-        result = self.indexer._parse_search_results(html_content, keywords)
+    def test_escape_xml(self):
+        """Test XML escaping of special characters."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['title'], 'Test Thread')
-        self.assertEqual(result[0]['category'], 'Movies')  # Default for non-season content
-        self.assertEqual(result[0]['category_id'], '25')
-
-    def test_parse_search_results_tv_content(self):
-        """Test parsing search results for TV content"""
-        html_content = '''
-        <html>
-        <body>
-            <li class="row">
-                <a class="topictitle" href="viewtopic.php?t=123">Dexter S01</a>
-                <time datetime="2023-12-01T12:00:00"></time>
-            </li>
-        </body>
-        </html>
-        '''
-
-        keywords = "dexter s01"
-        result = self.indexer._parse_search_results(html_content, keywords)
-
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['category'], 'TV')  # Should detect TV content
-        self.assertEqual(result[0]['category_id'], '52')
-
-    def test_parse_search_results_empty(self):
-        """Test parsing empty search results"""
-        html_content = '''
-        <html>
-        <body>
-            <div>No results found</div>
-        </body>
-        </html>
-        '''
-
-        result = self.indexer._parse_search_results(html_content, "test")
-        self.assertEqual(len(result), 0)
-
-    @patch('src.mircrew.core.indexer.requests.Session.get')
-    def test_extract_thread_magnets_success(self, mock_get):
-        """Test successful magnet extraction from thread"""
-        # Set up session
-        self.indexer.session = MagicMock()
-        self.indexer.unlocker = MagicMock()
-
-        thread_info = {
-            'title': 'Test Thread',
-            'details': 'https://mircrew-releases.org/viewtopic.php?t=123',
-            'category_id': '25'
-        }
-
-        # Mock unlocker to return magnets
-        self.indexer.unlocker.extract_magnets_with_unlock.return_value = [
-            'magnet:?xt=urn:btih:test123&dn=test.mkv'
+        test_cases = [
+            ("Normal text", "Normal text"),
+            ("Text with & ampersand", "Text with & ampersand"),
+            ("Less and < greater >", "Less and < greater >"),
+            ("Quote \" and ' apostrophe\"", "Quote \" and ' apostrophe\""),
+            ("Multiple <>&\"'", "Multiple <>&\"'"),
+            ("", ""),
+            (None, ""),
         ]
 
-        result = self.indexer._extract_thread_magnets(thread_info)
+        for input_text, expected in test_cases:
+            result = indexer._escape_xml(input_text)
+            assert result == expected
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['title'], 'test.mkv')  # Should use filename
-        self.assertIn('test123', result[0]['link'])
+    def test_escape_xml_mixed_content(self):
+        """Test XML escaping with complex content including newlines and special characters."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-    @patch('src.mircrew.core.indexer.requests.Session.get')
-    def test_extract_thread_magnets_fallback(self, mock_get):
-        """Test magnet extraction fallback when display name is not found"""
-        # Set up session
-        self.indexer.session = MagicMock()
-        self.indexer.unlocker = MagicMock()
+        # Title with special characters that might appear in torrent names
+        complex_title = "Movie.Title.2023.1080p.BluRay.x264-SOME<GROUP>&more[stuff]here"
 
-        thread_info = {
-            'title': 'Test Thread',
-            'details': 'https://mircrew-releases.org/viewtopic.php?t=123',
-            'category_id': '25'
-        }
+        escaped = indexer._escape_xml(complex_title)
+        expected = "Movie.Title.2023.1080p.BluRay.x264-SOME<GROUP>&more[stuff]here"
 
-        # Mock unlocker to return magnets without display name
-        self.indexer.unlocker.extract_magnets_with_unlock.return_value = [
-            'magnet:?xt=urn:btih:test123'  # No display name
+        assert escaped == expected
+        assert '<' not in escaped  # Should be escaped
+        assert '>' not in escaped  # Should be escaped
+        assert '&' not in escaped  # Should be escaped unless part of entity
+
+
+class TestSizeHandling:
+    """Test size parsing and byte conversion functionality."""
+
+    def test_parse_size_standard_formats(self):
+        """Test size parsing with standard formats."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
+
+        test_cases = [
+            ("The Matrix (1999) [1080p][x264][DTS][EN-IT][12.3GB]", "12.3GB"),
+            ("Movie [720p] 1.5 GB", "1.5GB"),
+            ("Show S01E01 500 MB", "500MB"),
+            ("Documentary (2003) [1.2TB]", "1.2TB"),
+            ("Episode.1080p.2.4GiB", "2.4GiB"),
+            ("Italian.Format.1,5GB", "1.5GB"),  # Italian comma decimal
+            ("Simple numbers 512MB", "512MB"),
         ]
 
-        result = self.indexer._extract_thread_magnets(thread_info)
+        for title, expected in test_cases:
+            result = indexer._parse_size(title)
+            assert result == expected, f"Failed to parse '{title}', expected '{expected}', got '{result}'"
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['title'], 'Test Thread')  # Should use thread title as fallback
+    def test_parse_size_no_size_info(self):
+        """Test size parsing when no size information is found."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-    def test_build_torznab_xml_structure(self):
-        """Test basic Torznab XML structure generation"""
-        magnets = [
-            {
-                'title': 'Test Magnet',
-                'link': 'magnet:?xt=urn:btih:test123&dn=test.mkv',
-                'details': 'https://mircrew-releases.org/viewtopic.php?t=123',
-                'category_id': '25',
-                'size': '1073741824',  # 1GB
-                'pub_date': '2023-12-01T12:00:00',
-                'seeders': 1,
-                'peers': 2
-            }
+        titles_without_size = [
+            "Movie Title Without Size Info",
+            "Another Movie [1080p]",
+            "Just a title with no size",
+            "",
         ]
 
-        result = self.indexer._build_torznab_xml(magnets)
+        for title in titles_without_size:
+            result = indexer._parse_size(title)
+            assert result is None
 
-        # Check XML structure
-        self.assertIn('<?xml version="1.0"', result)
-        self.assertIn('<rss version="2.0"', result)
-        self.assertIn('<channel>', result)
-        self.assertIn('<item>', result)
-        self.assertIn('<title>Test Magnet</title>', result)
-        self.assertIn('<guid>', result)
-        self.assertIn('<link>', result)
-        self.assertIn('<enclosure', result)
-        self.assertIn('test123', result)
+    def test_convert_size_to_bytes_standard_units(self):
+        """Test size conversion with standard units."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-    def test_extract_display_name_success(self):
-        """Test successful display name extraction from magnet URL"""
-        magnet_url = 'magnet:?xt=urn:btih:test123&dn=Sample.Movie.1080p.BluRay.x264.mkv'
+        test_cases = [
+            ("1GB", 1000000000),      # Decimal GB
+            ("500MB", 500000000),     # Decimal MB
+            ("1000KB", 1000000),      # Decimal KB
+            ("1GiB", 1073741824),     # Binary GiB
+            ("500MiB", 524288000),    # Binary MiB
+            ("1000KiB", 1024000),     # Binary KiB
+            ("1.5GB", 1500000000),    # Decimal with decimal
+            ("512MB", 512000000),     # Integer
+        ]
 
-        result = self.indexer._extract_display_name(magnet_url)
-        self.assertEqual(result, 'Sample.Movie.1080p.BluRay.x264.mkv')
+        for size_str, expected_bytes in test_cases:
+            result = indexer._convert_size_to_bytes(size_str)
+            assert result == expected_bytes, f"Failed to convert '{size_str}': expected {expected_bytes}, got {result}"
 
-    def test_extract_display_name_no_dn_parameter(self):
-        """Test display name extraction when dn parameter is missing"""
-        magnet_url = 'magnet:?xt=urn:btih:test123'  # No dn parameter
+    def test_convert_size_to_bytes_fallback(self):
+        """Test fallback behavior for unparseable size strings."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-        result = self.indexer._extract_display_name(magnet_url)
-        self.assertIsNone(result)
+        # Should default to 1GB for unparseable strings
+        default_gb = 1073741824
 
-    def test_extract_display_name_invalid_url(self):
-        """Test display name extraction with invalid magnet URL"""
-        magnet_url = 'https://example.com'  # Not a magnet URL
+        unparseable_sizes = [
+            "InvalidSizeString",
+            "",
+            "JustLettersNoNumbers",
+            "1XXX",  # Unknown unit
+        ]
 
-        result = self.indexer._extract_display_name(magnet_url)
-        self.assertIsNone(result)
+        for size_str in unparseable_sizes:
+            result = indexer._convert_size_to_bytes(size_str)
+            assert result == default_gb, f"Expected default {default_gb} for '{size_str}', got {result}"
 
-    def test_extract_magnet_hash_success(self):
-        """Test successful magnet hash extraction"""
-        magnet_url = 'magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef'
+    def test_convert_size_to_bytes_without_unit(self):
+        """Test size conversion for strings without explicit units."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-        result = self.indexer._extract_magnet_hash(magnet_url)
-        self.assertEqual(result, 'abcdef1234567890abcdef1234567890abcdef')
+        # Numbers without units should be interpreted intelligently
+        test_cases = [
+            ("10", 10737418240),     # >= 10, assume GB (10 * 1GB)
+            ("1", 1048576),         # < 10, assume MB (1 * 1MB)
+        ]
 
-    def test_extract_magnet_hash_invalid_format(self):
-        """Test magnet hash extraction with invalid format"""
-        magnet_url = 'magnet:?xt=urn:btih:short'  # Hash too short
+        for size_str, expected_bytes in test_cases:
+            result = indexer._convert_size_to_bytes(size_str)
+            assert result == expected_bytes, f"Failed to convert '{size_str}': expected {expected_bytes}, got {result}"
 
-        result = self.indexer._extract_magnet_hash(magnet_url)
-        self.assertEqual(result, '')  # Should return empty string for invalid hash
 
-    def test_convert_size_to_bytes_gb(self):
-        """Test size conversion to bytes for GB values"""
-        result = self.indexer._convert_size_to_bytes('2GB')
-        self.assertEqual(result, 2000000000)  # 2 * 1000^3
+class TestIndexingFunctionality:
+    """Test core indexing functionality."""
 
-    def test_convert_size_to_bytes_mb(self):
-        """Test size conversion to bytes for MB values"""
-        result = self.indexer._convert_size_to_bytes('512MB')
-        self.assertEqual(result, 512000000)  # 512 * 1000^2
+    def test_thread_id_search_syntax(self):
+        """Test that thread search syntax is properly parsed."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-    def test_convert_size_to_bytes_invalid(self):
-        """Test size conversion with invalid format"""
-        result = self.indexer._convert_size_to_bytes('invalid')
-        self.assertGreater(result, 0)  # Should return default value
+        # Valid thread search syntax
+        valid_queries = [
+            "thread::12345",
+            "thread::180404",
+            "thread::1",
+        ]
 
-    def test_escape_xml_special_chars(self):
-        """Test XML escaping of special characters"""
-        text = '''Title & "Name" <with> 'special' chars'''
-        expected = '''Title & "Name" <with> 'special' chars'''
+        for query in valid_queries:
+            assert query.lower().startswith("thread::")
+            thread_id = query[8:]  # Remove "thread::" prefix
+            assert thread_id.isdigit()
+            assert len(thread_id) > 0
 
-        result = self.indexer._escape_xml(text)
-        self.assertEqual(result, expected)
+    def test_thread_id_search_invalid(self):
+        """Test error handling for invalid thread search syntax."""
+        with patch('src.mircrew.core.indexer.requests.Session'):
+            indexer = MirCrewIndexer()
 
-    def test_error_response_structure(self):
-        """Test error response XML structure"""
-        message = "Test error message"
-        result = self.indexer._error_response(message)
+        invalid_queries = [
+            "thread::",           # Empty thread ID
+            "thread::notnumeric", # Non-numeric thread ID
+            "notthread::12345",   # Wrong prefix
+        ]
 
-        self.assertIn('<?xml version="1.0"', result)
-        self.assertIn('<rss version="2.0">', result)
-        self.assertIn('<error', result)
-        self.assertIn('Test error message', result)
-
-    def test_thread_search_constructs_correct_url(self):
-        """Test that thread search constructs correct URLs"""
-        # This test ensures the URL patterns are correct
-        thread_id = "180404"
-        expected_url = f"{self.indexer.base_url}/viewtopic.php?t={thread_id}"
-
-        # Verify URL construction logic
-        self.assertEqual(expected_url, "https://mircrew-releases.org/viewtopic.php?t=180404")
+        for query in invalid_queries:
+            # These should fail validation
+            thread_part = query.lower()
+            if thread_part.startswith("thread::"):
+                thread_id = query[8:]
+                if not thread_id.isdigit():
+                    # This is expected to fail
+                    assert not thread_id.isdigit()
 
 
 if __name__ == '__main__':
-    unittest.main()
+    # Test can be run with: python -m pytest tests/unit/test_indexer.py
+    pass

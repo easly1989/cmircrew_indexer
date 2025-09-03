@@ -7,6 +7,8 @@ Clicks the "Thanks" button to unlock hidden magnet links on forum threads.
 import sys
 import os
 import re
+import time
+from typing import Optional, List, Dict
 
 # Set up centralized logging
 from ..utils.logging_utils import setup_logging, get_logger
@@ -14,7 +16,6 @@ from ..utils.logging_utils import setup_logging, get_logger
 # Configure logging with centralized config
 setup_logging()
 logger = get_logger(__name__)
-from typing import Optional
 from bs4 import Tag
 import requests
 from bs4 import BeautifulSoup
@@ -29,26 +30,105 @@ from .auth import MirCrewLogin
 
 class MagnetUnlocker:
     """
-    Unlocks hidden magnet links by clicking the "Thanks" button
+    Unlocks hidden magnet links by clicking the "Thanks" button with enhanced fallback mechanisms
     """
 
-    def __init__(self):
+    def __init__(self, shared_session: Optional[requests.Session] = None):
+        """
+        Initialize unlocker with optional shared session.
+
+        Args:
+            shared_session: Authenticated session from MirCrew login (optional)
+        """
         self.base_url = "https://mircrew-releases.org"
-        self.session: Optional[requests.Session] = None
-        self.logged_in = False
-        self.login_handler = MirCrewLogin()
+
+        if shared_session:
+            self.session = shared_session
+            self.logged_in = True
+            logger.info("📋 Magnet Unlocker initialized with shared session")
+        else:
+            self.session = None
+            self.logged_in = False
+
+        self.login_handler: Optional[MirCrewLogin] = None
+        self.request_timeout = 30
+        self.max_retries = 3
+
+    def set_shared_session(self, session: requests.Session, login_handler: MirCrewLogin) -> bool:
+        """
+        Set shared authenticated session to avoid re-authentication.
+
+        Args:
+            session: Authenticated session from login
+            login_handler: Login handler instance
+
+        Returns:
+            bool: Always True
+        """
+        self.session = session
+        self.login_handler = login_handler
+        self.logged_in = True
+        logger.info("📋 Shared session set for magnet unlocker")
+        return True
+
+    def _make_request_with_retry(self, url: str, method: str = 'GET', params=None,
+                                data=None, desc: str = "request", timeout: int = 30) -> Optional[requests.Response]:
+        """
+        Make HTTP request with retry logic (simplified version for unlocker).
+
+        Args:
+            url: Target URL
+            method: HTTP method
+            params/data: Request parameters
+            desc: Description for logging
+            timeout: Request timeout
+
+        Returns:
+            Response object or None if failed
+        """
+        if not self.session:
+            logger.error("❌ No session available for unlocker request")
+            return None
+
+        for attempt in range(self.max_retries):
+            try:
+                logger.debug(f"🌐 Unlocker {desc} attempt {attempt + 1}")
+
+                if method.upper() == 'GET':
+                    response = self.session.get(url, params=params, timeout=timeout, allow_redirects=True)
+                else:
+                    response = self.session.post(url, data=data, timeout=timeout, allow_redirects=True)
+
+                if response.status_code < 400:
+                    return response
+
+            except Exception as e:
+                logger.debug(f"⚠️ Unlocker {desc} error: {type(e).__name__}")
+
+                if attempt < self.max_retries - 1:
+                    sleep_time = min(1.0 * (2 ** attempt), 5.0)  # type: ignore
+                    time.sleep(sleep_time)
+
+        return None
 
     def authenticate(self) -> bool:
-        """Authenticate using internal MirCrewLogin - EXACT DIAGNOSTIC APPROACH"""
+        """Authenticate using internal MirCrewLogin - only if not using shared session"""
 
-        # CRITICAL: Initialize session BEFORE calling login
+        if self.logged_in:
+            logger.info("🔄 Using existing authenticated session")
+            return True
+
+        logger.info("🔐 Authenticating magnet unlocker...")
+
+        # Initialize session BEFORE calling login (diagnostic approach)
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         })
 
+        self.login_handler = MirCrewLogin()
         if self.login_handler.login():
-            # REPLACE with login client's session (diagnostic approach)
+            # Replace with login client's session (diagnostic approach)
             self.session = self.login_handler.session
             self.logged_in = True
             logger.info("✅ Successfully authenticated")
