@@ -184,12 +184,7 @@ class MirCrewIndexer:
             # Ensure session is available before accessing attributes
             if not self.session:
                 return self._error_response("Session not available for search")
-
-            # Add debug output for request inspection
-            logging.info(f"🔍 DEBUG: Session headers: {dict(self.session.headers)}")
-            logging.info(f"🔍 DEBUG: Cookies: {dict(self.session.cookies)}")
-            logging.info(f"🔍 DEBUG: Request URL: {search_url}")
-
+    
             response = self.session.get(search_url, params=search_params, timeout=30, allow_redirects=True)
 
             if response.status_code != 200:
@@ -355,12 +350,7 @@ class MirCrewIndexer:
                 '<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">',
                 '<channel>',
 
-                # Response header
-                f'<item>',
-                f'<title>Direct thread search results for thread::{thread_id}</title>',
-                f'<pubDate>{datetime.now().isoformat()}Z</pubDate>',
-                f'<torznab:attr name="total" value="{len(all_magnets)}"/>',
-                f'</item>',
+                # No header item for direct thread search - just proceed with magnets
             ]
 
             for i, magnet in enumerate(all_magnets):
@@ -519,13 +509,6 @@ class MirCrewIndexer:
             '<?xml version="1.0" encoding="UTF-8"?>',
             '<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">',
             '<channel>',
-
-            # Response header
-            f'<item>',
-            f'<title>Total results</title>',
-            f'<pubDate>{datetime.now().isoformat()}Z</pubDate>',
-            f'<torznab:attr name="total" value="{len(magnets)}"/>',
-            f'</item>',
         ]
 
         for i, magnet in enumerate(magnets):
