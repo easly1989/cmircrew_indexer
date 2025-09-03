@@ -356,25 +356,29 @@ class MirCrewIndexer:
             for i, magnet in enumerate(all_magnets):
                 guid = f"thread-{thread_id}-{i}"
 
+                # Calculate size in bytes for enclosure
+                size_bytes = self._convert_size_to_bytes(magnet["size"])
+    
                 xml_lines.extend([
                     f'<item>',
-                    f'<title>{self._escape_xml(magnet["title"])}</title>',
+                    f'<title>{magnet["title"]}</title>',
                     f'<guid>{guid}</guid>',
-                    f'<link>{self._escape_xml(magnet["link"])}</link>',
-                    f'<comments>{self._escape_xml(magnet["details"])}</comments>',
+                    f'<link>{magnet["link"]}</link>',
+                    f'<enclosure url="{magnet["link"]}" type="application/x-bittorrent" length="{size_bytes}"/>',
+                    f'<comments>{magnet["details"]}</comments>',
                     f'<pubDate>{magnet["pub_date"]}</pubDate>',
                     f'<category>{magnet["category"]}</category>',
-                    f'<size>{self._convert_size_to_bytes(magnet["size"])}</size>',
-                    f'<description>{self._escape_xml(magnet.get("description", ""))}</description>',
-
+                    f'<size>{size_bytes}</size>',
+                    f'<description>{magnet.get("description", "")}</description>',
+    
                     # Torznab-specific attributes
                     f'<torznab:attr name="category" value="{magnet["category_id"]}"/>',
-                    f'<torznab:attr name="size" value="{self._convert_size_to_bytes(magnet["size"])}"/>',
+                    f'<torznab:attr name="size" value="{size_bytes}"/>',
                     f'<torznab:attr name="seeders" value="1"/>',
                     f'<torznab:attr name="peers" value="2"/>',
                     f'<torznab:attr name="downloadvolumefactor" value="0"/>',
                     f'<torznab:attr name="uploadvolumefactor" value="1"/>',
-
+    
                     f'</item>'
                 ])
 
@@ -514,20 +518,24 @@ class MirCrewIndexer:
         for i, magnet in enumerate(magnets):
             guid = f"magnet-{magnet['details'].split('=')[-1]}-{i}"
 
+            # Calculate size in bytes for enclosure
+            size_bytes = self._convert_size_to_bytes(magnet["size"])
+
             xml_lines.extend([
                 f'<item>',
-                f'<title>{self._escape_xml(magnet["title"])}</title>',
+                f'<title>{magnet["title"]}</title>',
                 f'<guid>{guid}</guid>',
-                f'<link>{self._escape_xml(magnet["link"])}</link>',
-                f'<comments>{self._escape_xml(magnet["details"])}</comments>',
+                f'<link>{magnet["link"]}</link>',
+                f'<enclosure url="{magnet["link"]}" type="application/x-bittorrent" length="{size_bytes}"/>',
+                f'<comments>{magnet["details"]}</comments>',
                 f'<pubDate>{magnet["pub_date"]}</pubDate>',
                 f'<category>{magnet["category"]}</category>',
-                f'<size>{self._convert_size_to_bytes(magnet["size"])}</size>',
-                f'<description>{self._escape_xml(magnet.get("description", ""))}</description>',
+                f'<size>{size_bytes}</size>',
+                f'<description>{magnet.get("description", "")}</description>',
 
                 # Torznab-specific attributes
                 f'<torznab:attr name="category" value="{magnet["category_id"]}"/>',
-                f'<torznab:attr name="size" value="{self._convert_size_to_bytes(magnet["size"])}"/>',
+                f'<torznab:attr name="size" value="{size_bytes}"/>',
                 f'<torznab:attr name="seeders" value="1"/>',
                 f'<torznab:attr name="peers" value="2"/>',
                 f'<torznab:attr name="downloadvolumefactor" value="0"/>',
@@ -560,8 +568,11 @@ class MirCrewIndexer:
 
     def _escape_xml(self, text: str) -> str:
         """Basic XML escaping"""
-        if text:
-            return text.replace('&', '&').replace('<', '<').replace('>', '>')
+        if not text:
+            return ""
+        replacements = [('&', '&'), ('<', '<'), ('>', '>'), ('"', '"'), ("'", ''')]
+        for old, new in replacements:
+            text = text.replace(old, new)
         return text
 
     def _convert_size_to_bytes(self, size_str: str) -> int:

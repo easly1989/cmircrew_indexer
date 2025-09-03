@@ -175,6 +175,29 @@ curl "http://localhost:9118/api?t=caps"
 2. Verify magazines are found and magnet links are returned
 3. Check logs for any errors
 
+## 🔄 Torznab Compliance Updates
+
+### Fix for NullReferenceException
+
+We resolved a critical issue where Prowlarr would throw a `System.NullReferenceException` during feed processing. This was caused by missing required XML elements in our Torznab responses.
+
+**Solution Implemented:**
+- Added `<enclosure>` elements with required attributes:
+  ```xml
+  <enclosure url="magnet:?xt=..." type="application/x-bittorrent" length="1610612736"/>
+  ```
+- Maintained backward compatibility with existing `<link>` elements
+- Proper XML escaping of special characters in titles/descriptions
+
+**Key Attributes:**
+| Attribute | Value | Description |
+|-----------|-------|-------------|
+| `url` | Magnet URI | The actual download link |
+| `type` | `application/x-bittorrent` | Required content type |
+| `length` | Size in bytes | Converted from human-readable sizes |
+
+This ensures full compliance with Torznab specifications and prevents parser errors in Prowlarr.
+
 ## 📊 Monitoring and Troubleshooting
 
 ### Container Logs
