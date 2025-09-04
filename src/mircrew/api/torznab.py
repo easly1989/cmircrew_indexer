@@ -1,5 +1,5 @@
 """Torznab XML generation utilities"""
-from typing import List, Dict
+from typing import List, Dict, Any
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -38,7 +38,7 @@ class TorznabXMLBuilder:
         return ET.tostring(root, encoding='unicode')
 
     @staticmethod
-    def build_search_results(magnets: List[Dict]) -> str:
+    def build_search_results(magnets: List[Dict[str, Any]]) -> str:
         """Build search results XML"""
         rss = ET.Element("rss")
         rss.set("version", "2.0")

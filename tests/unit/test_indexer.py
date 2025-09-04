@@ -258,4 +258,5 @@ class TestIndexingFunctionality:
 
 if __name__ == '__main__':
     # Test can be run with: python -m pytest tests/unit/test_indexer.py
-    pass
+    # FIXME: Implement test cases for indexer module
+    pass  # Placeholder until tests are implemented

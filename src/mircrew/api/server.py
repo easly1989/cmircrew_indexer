@@ -28,7 +28,7 @@ class MirCrewAPIServer:
     Flask-based API server that wraps the mircrew indexer CLI tool
     """
 
-    def __init__(self, host='0.0.0.0', port=9118):
+    def __init__(self, host: str = '0.0.0.0', port: int = 9118) -> None:
         self.host = host
         self.port = port
         self.app = Flask(__name__)

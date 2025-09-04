@@ -78,7 +78,7 @@ class MirCrewIndexer:
         logger.warning(f"Config file not found, using fallback: {fallback_path}")
         return fallback_path
 
-    def _load_config(self) -> tuple:
+    def _load_config(self) -> tuple[dict[str, str], dict[str, str]]:
         """
         Load category mappings and default sizes from config file.
 

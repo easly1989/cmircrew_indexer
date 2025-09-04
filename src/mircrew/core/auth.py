@@ -2,19 +2,35 @@ import os
 import re
 import time
 import random
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 import requests
 from bs4 import BeautifulSoup, Tag
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Set up centralized logging
-from ..utils.logging_utils import setup_logging, get_logger
+# Set up basic logging if centralized logging is not available
+def setup_basic_logging() -> None:
+    """Setup basic logging configuration"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
-# Configure logging with centralized config
-setup_logging()
+def get_logger(name: str) -> logging.Logger:
+    """Get logger instance"""
+    return logging.getLogger(name)
+
+# Try to use centralized logging, fall back to basic logging
+try:
+    from ..utils.logging_utils import setup_logging, get_logger
+    setup_logging()
+except ImportError:
+    setup_basic_logging()
+
 logger = get_logger(__name__)
 
 class MirCrewLogin:
@@ -22,7 +38,7 @@ class MirCrewLogin:
     Handles authentication for mircrew-releases.org forum with enhanced anti-detection measures
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.base_url = "https://mircrew-releases.org"
         self.login_url = f"{self.base_url}/ucp.php?mode=login&redirect=index.php"
         self.session = requests.Session()
@@ -30,7 +46,7 @@ class MirCrewLogin:
         # Configure session headers with enhanced anti-detection
         self._setup_session_headers()
 
-    def _setup_session_headers(self):
+    def _setup_session_headers(self) -> None:
         """Setup session headers with enhanced rotating user agents and better anti-detection"""
         # Expanded user agent pool for better rotation
         user_agents = [
@@ -65,7 +81,7 @@ class MirCrewLogin:
         selected_ua = random.choice(user_agents)
 
         # Extract browser info for consistent headers
-        is_chrome = 'Chrome' in selected_ua
+        is_chrome = 'Chrome' in selected_ua and 'Edg' not in selected_ua
         is_firefox = 'Firefox' in selected_ua
         is_edge = 'Edg' in selected_ua
 
@@ -88,11 +104,10 @@ class MirCrewLogin:
         if is_chrome or is_edge:
             headers['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'
             headers['sec-ch-ua-mobile'] = '?0'
-            headers['sec-ch-ua-platform'] = '"Windows"' if 'Windows' in selected_ua else '"macOS"'
+            headers['sec-ch-ua-platform'] = '"Windows"' if 'Windows' in selected_ua else ('"macOS"' if 'Mac' in selected_ua else '"Linux"')
         elif is_firefox:
-            headers['Sec-Fetch-Dest'] = 'document'
-            headers['Sec-Fetch-Mode'] = 'navigate'
-            headers['Sec-Fetch-Site'] = 'none'
+            # Firefox doesn't use sec-ch-ua headers
+            pass
 
         # Randomize some headers to appear more natural
         if random.choice([True, False]):
@@ -188,12 +203,17 @@ class MirCrewLogin:
         logger.warning("⚠️ Session establishment completed with warnings")
         return True
 
-    def _extract_form_data_precise(self, html_content: str) -> dict:
+    def _extract_form_data_precise(self, html_content: str) -> Dict[str, str]:
         """
         Precise form data extraction targeting the login form specifically
+        
+        Args:
+            html_content: HTML content of the login page
+            
+        Returns:
+            Dict[str, str]: Dictionary of form fields and their values
         """
         soup = BeautifulSoup(html_content, 'html.parser')
-
         form_data = {}
 
         # Find the login form - try multiple strategies
@@ -206,9 +226,10 @@ class MirCrewLogin:
         if not login_form:
             forms = soup.find_all('form')
             for form in forms:
-                if form.find('input', {'name': 'username'}):
-                    login_form = form
-                    break
+                if isinstance(form, Tag):
+                    if form.find('input', {'name': 'username'}):
+                        login_form = form
+                        break
 
         # Strategy 3: Fallback to any form
         if not login_form:
@@ -218,16 +239,18 @@ class MirCrewLogin:
             # Extract all inputs from the form
             inputs = login_form.find_all('input')
             for input_field in inputs:
-                if hasattr(input_field, 'get'):
-                    name = input_field.get('name')
-                    value = input_field.get('value', '')
-                    if name:
-                        form_data[name] = value
+                if isinstance(input_field, Tag):
+                    if hasattr(input_field, 'get'):
+                        name = input_field.get('name')
+                        value = input_field.get('value', '')
+                        if name:
+                            form_data[name] = value or ''
 
         logger.debug(f"Extracted {len(form_data)} fields from login form")
-        return form_data
+        result = {str(k): str(v) for k, v in form_data.items()}
+        return result
 
-    def _prepare_login_payload(self, username: str, password: str, form_data: dict) -> dict:
+    def _prepare_login_payload(self, username: str, password: str, form_data: Dict[str, str]) -> Dict[str, str]:
         """
         Prepare login payload with precise field ordering and validation.
 
@@ -237,7 +260,7 @@ class MirCrewLogin:
             form_data: Extracted form fields from login page
 
         Returns:
-            dict: Properly ordered login payload
+            Dict[str, str]: Properly ordered login payload
         """
         if not isinstance(form_data, dict):
             raise TypeError("form_data must be a dictionary")
@@ -287,7 +310,7 @@ class MirCrewLogin:
             for attempt in range(max_attempts):
                 if attempt > 0:
                     # Exponential backoff with jitter: base_delay * (2^attempt) + random_jitter
-                    base_delay = min(2.0 * (2 ** attempt), 30.0)  # Cap at 30 seconds
+                    base_delay = min(2.0 * (2 ** (attempt - 1)), 30.0)  # Cap at 30 seconds, fix exponent
                     jitter = random.uniform(0.1, 2.0)
                     delay = base_delay + jitter
 
@@ -301,11 +324,13 @@ class MirCrewLogin:
                     if not self._establish_session():
                         logger.warning("⚠️ Session establishment failed, continuing with login attempt")
 
-                # Fresh session for each attempt
+                # Fresh session for each attempt after the first
                 if attempt > 0:
                     self.session = requests.Session()
                     self._setup_session_headers()
-                    self._establish_session()
+                    if not self._establish_session():
+                        logger.warning("⚠️ Session re-establishment failed")
+                        continue
 
                 try:
                     # Fetch login page with enhanced error handling
@@ -325,10 +350,6 @@ class MirCrewLogin:
 
                 if not form_data.get('form_token'):
                     logger.warning("⚠️ Missing form_token, retrying...")
-                    continue
-
-                if not form_data.get('sid'):
-                    logger.warning("⚠️ Missing sid, retrying...")
                     continue
 
                 # Prepare payload
@@ -396,6 +417,12 @@ class MirCrewLogin:
     def validate_login(self, response: requests.Response) -> bool:
         """
         Validate login success with multiple checks
+        
+        Args:
+            response: The response object from the login request
+            
+        Returns:
+            bool: True if login was successful, False otherwise
         """
         try:
             if response.status_code != 200:
@@ -409,7 +436,10 @@ class MirCrewLogin:
             error_elements = []
             for tag in ['div', 'span', 'p']:
                 for element in soup.find_all(tag):
-                    element_class = element.get('class', [])
+                    if not isinstance(element, Tag):
+                        continue
+
+                    element_class = element.get('class', None)
                     if element_class and any('error' in cls.lower() or 'danger' in cls.lower() for cls in element_class):
                         error_text = element.get_text().strip()
                         if error_text:
@@ -445,8 +475,8 @@ class MirCrewLogin:
                     'my account',
                     'profile',
                     'logged in as',
-                    'benvenuto', # Italian "welcome"
-                    'profilo'    # Italian "profile"
+                    'benvenuto',  # Italian "welcome"
+                    'profilo'     # Italian "profile"
                 ]
 
                 for indicator in success_indicators:
@@ -510,28 +540,24 @@ class MirCrewLogin:
             # Success indicators with Italian translations
             success_indicators = [
                 'logout', 'my account', 'profile', 'logged in as',
-                'benvenuto', 'profilo', 'disconnetti', # Italian
+                'benvenuto', 'profilo', 'disconnetti',  # Italian
                 'forum', 'threads', 'posts'  # Forum content indicators
             ]
-
-            # Error indicators that show we're not logged in
-            error_indicators = [
-                'login', 'register', 'password', 'username',
-                'accedi', 'registrati', 'autenticazione'  # Italian
-            ]
-
-            # Check for error indicators first (stronger signal)
-            if any(err in response_lower for err in error_indicators):
-                logger.debug("⚠️ Found error indicators - not logged in")
-                return False
 
             # Check for success indicators
             if any(indicator in response_lower for indicator in success_indicators):
                 logger.debug("✅ Found success indicators - session valid")
                 return True
 
+            # Check for login form presence (indicates not logged in)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            login_form = soup.find('form', action=lambda x: bool(x) and 'login' in x.lower())
+            if login_form:
+                logger.debug("⚠️ Login form found - not logged in")
+                return False
+
             # Default: assume logged in if we get here without clear indicators
-            logger.debug("⚠️ No clear indicators found - treating as logged in")
+            logger.debug("⚠️ No clear indicators found - assuming logged in")
             return True
 
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
@@ -544,14 +570,32 @@ class MirCrewLogin:
     def logout(self) -> bool:
         """
         Perform logout
+        
+        Returns:
+            bool: True if logout successful, False otherwise
         """
         try:
-            logout_url = f"{self.base_url}/ucp.php?mode=logout&sid={self.session.cookies.get('phpbb3_34c6d_sid', '')}"
-            response = self.session.get(logout_url, allow_redirects=True)
-            logger.info("👋 Logged out successfully")
-            return True
+            # Try to get session ID from cookies
+            session_id = self.session.cookies.get('phpbb3_34c6d_sid', '')
+            if not session_id:
+                # Try other common phpBB session cookie names
+                for cookie_name, cookie_value in self.session.cookies.items():
+                    if isinstance(cookie_name, str) and 'sid' in cookie_name.lower():
+                        session_id = cookie_value
+                        break
+            
+            logout_url = f"{self.base_url}/ucp.php?mode=logout&sid={session_id}"
+            response = self.session.get(logout_url, allow_redirects=True, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info("👋 Logged out successfully")
+                return True
+            else:
+                logger.warning(f"⚠️ Logout request returned {response.status_code}")
+                return False
+                
         except Exception as e:
-            logger.error(f"Logout error: {str(e)}")
+            logger.error(f"💥 Logout error: {type(e).__name__}: {str(e)}")
             return False
 
 
@@ -562,8 +606,6 @@ def test_login() -> bool:
     Returns:
         bool: True if all tests pass, False otherwise
     """
-    import sys
-
     logger.info("🧪 Starting MirCrew login test suite...")
     start_time = time.time()
 
@@ -612,13 +654,14 @@ def test_login() -> bool:
         logger.info("🚨 Test 4: Testing error handling...")
         try:
             # Test with missing credentials
-            import os
             original_username = os.environ.get('MIRCREW_USERNAME')
             original_password = os.environ.get('MIRCREW_PASSWORD')
 
             # Temporarily remove credentials
-            os.environ.pop('MIRCREW_USERNAME', None)
-            os.environ.pop('MIRCREW_PASSWORD', None)
+            if 'MIRCREW_USERNAME' in os.environ:
+                os.environ.pop('MIRCREW_USERNAME')
+            if 'MIRCREW_PASSWORD' in os.environ:
+                os.environ.pop('MIRCREW_PASSWORD')
 
             error_client = MirCrewLogin()
             try:

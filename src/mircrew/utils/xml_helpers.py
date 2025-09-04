@@ -1,14 +1,16 @@
 """XML parsing and generation utilities"""
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
+from .logging_utils import get_logger
 from datetime import datetime
 
+logger = get_logger(__name__)
 
 class XMLHelper:
     """XML utilities for Torznab compatibility"""
 
     @staticmethod
-    def create_element(name: str, **attrs) -> ET.Element:
+    def create_element(name: str, **attrs: Any) -> ET.Element:
         """Create XML element with attributes"""
         elem = ET.Element(name)
         for key, value in attrs.items():
@@ -38,7 +40,6 @@ class XMLHelper:
         replacements = [('&', '&amp;amp;'), ('<', '&amp;lt;'), ('>', '&gt;'), ('"', '&quot;'), ("'", '&apos;')]
         for old, new in replacements:
             text = text.replace(old, new)
-        return text
 
         return text
 
@@ -51,9 +52,16 @@ class XMLHelper:
     def validate_xml(xml_string: str) -> bool:
         """Validate XML string"""
         try:
+            logger.debug("Validating XML string...")
+            logger.debug("Validating XML string...")
+            logger.debug("Validating XML string...")
+            logger.debug("Validating XML string...")
+            logger.debug("Validating XML string...")
             ET.fromstring(xml_string)
             return True
-        except ET.ParseError:
+        except ET.ParseError as e:
+            logger.error(f"XML validation error: {e}")
+            return False
             return False
 
 
