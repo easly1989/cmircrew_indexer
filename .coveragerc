@@ -1,0 +1,28 @@
+[run]
+source = src
+branch = True
+omit =
+    tests/*
+    utilities/*
+    scripts/*
+    setup.py
+
+[html]
+title = MirCrew Indexer Coverage Report
+show_contexts = True
+
+[xml]
+output = coverage.xml
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    def __str__
+    def __eq__
+    if __name__ == .__main__.:
+    if self._debug:
+    if not self.logger:
+    raise AssertionError
+    raise NotImplementedError
+show_missing = True

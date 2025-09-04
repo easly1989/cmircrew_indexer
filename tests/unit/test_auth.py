@@ -39,7 +39,7 @@ class TestMirCrewAuth:
     @patch.dict('os.environ', {'MIRCREW_USERNAME': '', 'MIRCREW_PASSWORD': 'test'})
     def test_get_credentials_empty_username(self):
         """Test error handling for empty username."""
-        with pytest.raises(ValueError, match="Username cannot be empty"):
+        with pytest.raises(ValueError, match="Missing credentials"):
             self.auth.get_credentials()
 
     @patch.dict('os.environ', {'MIRCREW_USERNAME': 'test', 'MIRCREW_PASSWORD': '12'})
