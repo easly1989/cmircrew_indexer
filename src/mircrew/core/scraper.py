@@ -22,6 +22,7 @@ setup_logging()
 logger = get_logger(__name__)
 from datetime import datetime
 import requests
+from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
@@ -50,11 +51,18 @@ class MirCrewScraper:
             self.session_sharing = True
             logger.info("📋 Using shared authenticated session")
         else:
+            # Use connection pooling with max 10 connections
+            adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10)
             self.session = requests.Session()
+            self.session.mount('https://', adapter)
+            self.session.mount('http://', adapter)
             self.session_sharing = False
             # Set up browser-like headers if using own session
             default_ua = user_agent or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             self._setup_session_headers(default_ua)
+            # Initialize cache with 100 item capacity
+            self.cache = {}
+            self.cache_capacity = 100
 
         self.auth_handler: Optional[MirCrewLogin] = None
         self.max_retries = 3
@@ -172,6 +180,12 @@ class MirCrewScraper:
         search_url = f"{self.base_url}/search.php"
         # Convert list of tuples to dict for type safety
         params_dict = dict(search_params)
+        # Check cache first
+        cache_key = f"search:{query}:{max_results}"
+        if cache_key in self.cache:
+            logger.info(f"📦 Returning cached results for '{query}'")
+            return self.cache[cache_key]
+
         response = self._make_request_with_retry(search_url, params=params_dict,
                                                 desc="search query", timeout=self.request_timeout)
 
@@ -205,7 +219,14 @@ class MirCrewScraper:
 
         logger.info(f"🎉 Total results: {len(all_magnets)} magnet links from {len(threads_limited)} threads")
 
-        return self._format_results(all_magnets)
+        results = self._format_results(all_magnets)
+        
+        # Update cache
+        if len(self.cache) >= self.cache_capacity:
+            self.cache.pop(next(iter(self.cache)))  # Remove oldest entry
+        self.cache[cache_key] = results
+        
+        return results
 
     def _make_request_with_retry(self, url: str, method: str = 'GET', params: Optional[Dict[str, Any]] = None,
                                 data=None, desc: str = "request", timeout: int = 30,
