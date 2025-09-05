@@ -20,7 +20,8 @@ def _load_yaml_config(config_path: str) -> Optional[Dict[str, Any]]:
         import yaml
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f)
+                return config if isinstance(config, dict) else None
         except (FileNotFoundError, yaml.YAMLError):
             return None
     except ImportError:

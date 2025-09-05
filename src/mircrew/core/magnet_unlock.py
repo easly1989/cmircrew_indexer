@@ -8,7 +8,7 @@ import sys
 import os
 import re
 import time
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 # Set up centralized logging
 from ..utils.logging_utils import setup_logging, get_logger
@@ -47,7 +47,7 @@ class MagnetUnlocker:
             self.logged_in = True
             logger.info("📋 Magnet Unlocker initialized with shared session")
         else:
-            self.session = None
+            self.session = requests.Session()  # Initialize empty session
             self.logged_in = False
 
         self.login_handler: Optional[MirCrewLogin] = None
@@ -71,8 +71,8 @@ class MagnetUnlocker:
         logger.info("📋 Shared session set for magnet unlocker")
         return True
 
-    def _make_request_with_retry(self, url: str, method: str = 'GET', params=None,
-                                data=None, desc: str = "request", timeout: int = 30) -> Optional[requests.Response]:
+    def _make_request_with_retry(self, url: str, method: str = 'GET', params: Optional[Dict[str, Any]] = None,
+                                data: Optional[Dict[str, Any]] = None, desc: str = "request", timeout: int = 30) -> Optional[requests.Response]:
         """
         Make HTTP request with retry logic (simplified version for unlocker).
 
@@ -106,7 +106,7 @@ class MagnetUnlocker:
                 logger.debug(f"⚠️ Unlocker {desc} error: {type(e).__name__}")
 
                 if attempt < self.max_retries - 1:
-                    sleep_time = min(1.0 * (2 ** attempt), 5.0)  # type: ignore
+                    sleep_time = min(1.0 * (2 ** attempt), 5.0)
                     time.sleep(sleep_time)
 
         return None
@@ -146,9 +146,11 @@ class MagnetUnlocker:
             # This is more reliable than trying to find the first post directly
             thanks_buttons = soup.find_all(attrs={'id': re.compile(r'lnk_thanks_post\d+')})
 
-            if thanks_buttons:
+            if thanks_buttons and isinstance(thanks_buttons[0], Tag):
                 # Take the first thanks button's ID and extract the post ID
-                button_id = thanks_buttons[0].get('id', '')
+                first_button = thanks_buttons[0]
+                if first_button and isinstance(first_button, Tag):
+                    button_id = first_button.get('id', '') if isinstance(thanks_buttons[0], Tag) else ''
                 if isinstance(button_id, str) and button_id.startswith('lnk_thanks_post'):
                     post_id = button_id.replace('lnk_thanks_post', '')
                     logger.info(f"✅ Found first thanks button: {button_id}, extracted post ID: {post_id}")
@@ -157,7 +159,7 @@ class MagnetUnlocker:
             # Fallback: Look for any elements with thanks in ID and extract post_id
             thanks_elements = soup.find_all(attrs={'id': re.compile(r'thanks.*\d+')})
             for elem in thanks_elements:
-                elem_id = elem.get('id', '')
+                elem_id = elem.get('id', '') if isinstance(elem, Tag) else ''
                 if isinstance(elem_id, str):
                     # Extract number from various thanks button ID patterns
                     match = re.search(r'(\d+)', elem_id)
@@ -169,19 +171,19 @@ class MagnetUnlocker:
             # OLD approaches as backup
             # Approach 1: Look for anchor links with post IDs
             for link in soup.find_all('a', id=re.compile(r'post_\d+')):
-                link_id = link.get('id', '')
+                link_id = link.get('id', '') if isinstance(link, Tag) else ''
                 if isinstance(link_id, str) and re.search(r'post_\d+', link_id):
                     return link_id.replace('post_', '')
 
             # Approach 2: Look for post div elements
             for post_div in soup.find_all('div', id=re.compile(r'^post_\d+')):
-                post_id = post_div.get('id', '')
+                post_id = post_div.get('id', '') if isinstance(post_div, Tag) else ''
                 if isinstance(post_id, str) and 'post_' in post_id:
                     return post_id.replace('post_', '')
 
             # Approach 3: Look for permalink elements
             for permalink in soup.find_all('a', href=re.compile(r'post_id=\d+')):
-                href = permalink.get('href', '')
+                href = permalink.get('href', '') if isinstance(permalink, Tag) else ''
                 if isinstance(href, str):
                     match = re.search(r'post_id=(\d+)', href)
                     if match:
@@ -218,7 +220,7 @@ class MagnetUnlocker:
             for pattern in alt_patterns:
                 # Look for any element with this pattern in ID
                 for elem in soup.find_all(attrs={'id': True}):
-                    elem_id = elem.get('id', '')
+                    elem_id = elem.get('id', '') if isinstance(elem, Tag) else ''
                     if isinstance(elem_id, str) and pattern in elem_id.lower():
                         button_id = elem_id
                         logger.info(f"✅ Found thanks button (alternative): {button_id}")
@@ -345,7 +347,7 @@ class MagnetUnlocker:
             logger.error(f"❌ Error in unlock_magnets: {str(e)}")
             return False
 
-    def extract_magnets_with_unlock(self, thread_url: str) -> list:
+    def extract_magnets_with_unlock(self, thread_url: str) -> List[str]:
         """
         Extract magnets from a thread, unlocking first if needed
         ONLY extracts from the FIRST POST to avoid duplicates
@@ -377,17 +379,17 @@ class MagnetUnlocker:
 
             # NEW APPROACH: Find the first post by looking for post containers
             # and taking the chronologically first one (TOP of the page)
-            all_post_containers = []
+            all_post_containers: List[Tag] = []
 
             # Look for common phpBB post container patterns
             pattern_candidates = [
-                soup.find_all('div', class_=re.compile(r'postbody')),
-                soup.find_all('div', class_=re.compile(r'post-text')),
-                soup.find_all('div', class_=re.compile(r'content')),
-                soup.find_all('div', class_=re.compile(r'post')),
-                soup.find_all('article', class_=re.compile(r'post')),
-                soup.find_all('div', attrs={'data-post-id': True}),
-                soup.find_all(['div', 'li'], class_=re.compile(r'(post|content)')),
+                [e for e in soup.find_all('div', class_=re.compile(r'postbody')) if isinstance(e, Tag)],
+                [e for e in soup.find_all('div', class_=re.compile(r'post-text')) if isinstance(e, Tag)],
+                [e for e in soup.find_all('div', class_=re.compile(r'content')) if isinstance(e, Tag)],
+                [e for e in soup.find_all('div', class_=re.compile(r'post')) if isinstance(e, Tag)],
+                [e for e in soup.find_all('article', class_=re.compile(r'post')) if isinstance(e, Tag)],
+                [e for e in soup.find_all('div', attrs={'data-post-id': True}) if isinstance(e, Tag)],
+                [e for e in soup.find_all(['div', 'li'], class_=re.compile(r'(post|content)')) if isinstance(e, Tag)],
             ]
 
             for candidate_list in pattern_candidates:
@@ -412,9 +414,12 @@ class MagnetUnlocker:
 
                 # Extract magnets ONLY from this first post
                 for link in first_post.find_all('a', href=magnet_pattern):
-                    magnet_url = link['href'].strip()
-                    magnet_url = re.sub(r'\s+', '', magnet_url)  # Remove whitespace
-                    magnet_url = magnet_url.split('#')[0]  # Remove fragments
+                    if isinstance(link, Tag) and link.has_attr('href'):
+                        href=link['href']
+                        if isinstance(href, str):
+                            magnet_url = href.strip()
+                            magnet_url = re.sub(r'\s+', '', magnet_url)  # Remove whitespace
+                            magnet_url = magnet_url.split('#')[0]  # Remove fragments
 
                     if magnet_pattern.match(magnet_url):
                         # Avoid duplicates
@@ -425,7 +430,9 @@ class MagnetUnlocker:
                 logger.warning("⚠️ No post containers found, extracting from entire page")
                 # Extreme fallback: search the entire page
                 for link in soup.find_all('a', href=magnet_pattern):
-                    magnet_url = link['href'].strip()
+                    if isinstance(link, Tag) and link.has_attr('href'):
+                        href = link['href']
+                        magnet_url = str(href).strip() if href else ''
                     magnet_url = re.sub(r'\s+', '', magnet_url)
                     magnet_url = magnet_url.split('#')[0]
 
@@ -442,7 +449,7 @@ class MagnetUnlocker:
             return []
 
 
-def diagnose_thanks_buttons():
+def diagnose_thanks_buttons() -> bool:
     """Diagnose thanks buttons on a page"""
     unlocker = MagnetUnlocker()
 
@@ -463,14 +470,20 @@ def diagnose_thanks_buttons():
 
             logger.info(f"🎯 Found {len(thanks_elements)} thanks-related elements:")
             for elem in thanks_elements[:5]:  # Show first 5
-                logger.info(f"  - Tag: {elem.name}, ID: {elem.get('id')}, Class: {elem.get('class')}, Href: {elem.get('href', '')[:50]}...")
+                if isinstance(elem, Tag):
+                    name = elem.name
+                    elem_id = elem.get('id', '')
+                    elem_class = elem.get('class', '')
+                    href = elem.get('href', '')
+                    elem_href = str(href)[:50] if href else ''
+                    logger.info(f"  - Tag: {name}, ID: {elem_id}, Class: {elem_class}, Href: {elem_href}...")
 
             return True
         else:
             logger.error(f"Failed to fetch page: {response.status_code}")
     return False
 
-def test_unlocker():
+def test_unlocker() -> bool:
     """Test the magnet unlocker"""
     unlocker = MagnetUnlocker()
 
